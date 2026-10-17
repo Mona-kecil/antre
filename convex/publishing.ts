@@ -207,6 +207,28 @@ export const publish = internalAction({
             "id" in container ? container.id : undefined,
             "container id",
           );
+          const deadline = Date.now() + 30_000;
+          while (true) {
+            const result = await threads(containerId, account.accessToken, {
+              fields: "status,error_message",
+            });
+            const status = "status" in result ? result.status : undefined;
+            if (status === "FINISHED") break;
+            if (status === "ERROR" || status === "EXPIRED") {
+              throw new Error(
+                "error_message" in result &&
+                  typeof result.error_message === "string" &&
+                  result.error_message
+                  ? result.error_message
+                  : status,
+              );
+            }
+            if (Date.now() >= deadline)
+              throw new Error(
+                "Threads is still processing this part; retry shortly",
+              );
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+          }
           const published = await threads(
             `${account.threadsUserId}/threads_publish`,
             account.accessToken,

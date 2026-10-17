@@ -12,7 +12,11 @@ async function setup() {
     [];
   const containers = new Map<
     string,
-    { text: string; replied_to?: { id: string } }
+    {
+      text: string;
+      replied_to?: { id: string };
+      statusChecks: number;
+    }
   >();
   const live: {
     id: string;
@@ -21,7 +25,8 @@ async function setup() {
     timestamp: string;
   }[] = [];
   let failure:
-    { text: string; mode: "reject" | "timeout" | "token" } | undefined;
+    | { text: string; mode: "reject" | "timeout" | "token" | "processing" }
+    | undefined;
   let failRefresh = false;
   vi.stubGlobal(
     "fetch",
@@ -68,13 +73,34 @@ async function setup() {
         const parent = params.get("reply_to_id");
         containers.set(id, {
           text: params.get("text") ?? "",
+          statusChecks: 0,
           ...(parent ? { replied_to: { id: parent } } : {}),
         });
         return Response.json({ id });
       }
+      const statusContainer = containers.get(path);
+      if (method === "GET" && statusContainer) {
+        expect(params.get("fields")).toBe("status,error_message");
+        statusContainer.statusChecks++;
+        if (failure?.text === statusContainer.text && failure.mode === "processing")
+          return Response.json({
+            status: "ERROR",
+            error_message: "Media processing failed",
+          });
+        return Response.json({
+          status: statusContainer.statusChecks === 1 ? "IN_PROGRESS" : "FINISHED",
+        });
+      }
       if (method === "POST" && path === "user/threads_publish") {
         const container = containers.get(params.get("creation_id") ?? "");
         if (!container) throw new Error("Unknown container");
+        if (container.statusChecks < 2)
+          return Response.json(
+            {
+              error: { message: "The requested resource does not exist", code: 24 },
+            },
+            { status: 400 },
+          );
         const mode =
           failure?.text === container.text ? failure.mode : undefined;
         if (mode) failure = undefined;
@@ -91,7 +117,12 @@ async function setup() {
           );
         }
         const id = `post-${live.length + 1}`;
-        live.push({ id, ...container, timestamp: new Date().toISOString() });
+        live.push({
+          id,
+          text: container.text,
+          replied_to: container.replied_to,
+          timestamp: new Date().toISOString(),
+        });
         if (mode === "timeout") throw new Error("Publish response timed out");
         return Response.json({ id });
       }
@@ -162,7 +193,7 @@ test("queues consecutive WIB slots, spills after noon, and publishes each schedu
   expect(fake.requests).toHaveLength(0);
   for (let index = 0; index < slots.length; index++) {
     await t.finishAllScheduledFunctions(() =>
-      vi.advanceTimersByTime(Math.max(0, slots[index] - Date.now())),
+      vi.advanceTimersByTime(Math.max(1_000, slots[index] - Date.now())),
     );
     const posts = await t.query(api.posts.listQueue, { secret });
     expect(posts[index]).toMatchObject({
@@ -220,6 +251,28 @@ test("publishes a three-part reply chain with an image from Convex storage", asy
       },
     },
   ]);
+});
+
+test("marks a post failed with Meta's container processing error", async () => {
+  const { t, fake } = await setup();
+  fake.fail("broken image", "processing");
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "broken image" }],
+  });
+  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    {
+      publishedIds: [],
+      status: { kind: "failed", error: "Media processing failed" },
+    },
+  ]);
+  expect(fake.live).toHaveLength(0);
+  expect(
+    fake.requests.some(({ path }) => path === "user/threads_publish"),
+  ).toBe(false);
 });
 
 test.each(["reject", "timeout"] as const)(
