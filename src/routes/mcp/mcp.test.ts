@@ -1,4 +1,8 @@
 import { expect, test, vi } from "vitest";
+import {
+  PROTOCOL_VERSION_META_KEY,
+  CLIENT_CAPABILITIES_META_KEY,
+} from "@modelcontextprotocol/server";
 import { POST } from "./+server";
 
 vi.mock("$app/env/private", () => ({ MCP_TOKEN: "test-mcp-token" }));
@@ -10,7 +14,10 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists the
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Mcp-Method": method,
           Accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version":
+            method === "initialize" ? "2025-11-25" : "2026-07-28",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
@@ -20,12 +27,19 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists the
           ...(method === "initialize"
             ? {
                 params: {
-                  protocolVersion: "2026-07-28",
+                  protocolVersion: "2025-11-25",
                   capabilities: {},
                   clientInfo: { name: "test", version: "1" },
                 },
               }
-            : {}),
+            : {
+                params: {
+                  _meta: {
+                    [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
+                    [CLIENT_CAPABILITIES_META_KEY]: {},
+                  },
+                },
+              }),
         }),
       }),
     } as Parameters<typeof POST>[0]);
