@@ -11,6 +11,8 @@ import {
 import { withSecret } from "./auth";
 import { meta, part } from "./schema";
 
+const source = v.optional(v.union(v.literal("web"), v.literal("agent")));
+
 function validateParts(parts: Doc<"posts">["parts"]) {
   if (
     parts.length === 0 ||
@@ -29,6 +31,7 @@ async function startPublishing(
   const startedAt = Date.now();
   await ctx.db.patch(post._id, {
     status: { kind: "publishing", at, startedAt },
+    source: post.source,
   });
   await ctx.scheduler.runAfter(0, internal.publishing.publish, {
     id: post._id,
@@ -61,6 +64,7 @@ export const updateDraft = mutation(
   withSecret(
     {
       id: v.id("posts"),
+      source,
       parts: v.optional(v.array(part)),
       meta: v.optional(meta),
     },
@@ -85,6 +89,7 @@ export const updateDraft = mutation(
       }
       await ctx.db.patch(args.id, {
         ...(args.parts === undefined ? {} : { parts: args.parts }),
+        ...(args.source === undefined ? {} : { source: args.source }),
         ...(args.meta === undefined ? {} : { meta: args.meta }),
       });
     },
@@ -93,7 +98,7 @@ export const updateDraft = mutation(
 
 export const queue = mutation(
   withSecret(
-    { id: v.id("posts"), at: v.optional(v.number()) },
+    { id: v.id("posts"), at: v.optional(v.number()), source },
     async (ctx: MutationCtx, args) => {
       const post = await ctx.db.get(args.id);
       if (
@@ -157,62 +162,85 @@ export const queue = mutation(
         id: args.id,
         retry: post.status.kind === "failed" || post.publishedIds.length > 0,
       });
-      await ctx.db.patch(args.id, { status: { kind: "queued", at, jobId } });
+      await ctx.db.patch(args.id, {
+        status: { kind: "queued", at, jobId },
+        source: args.source ?? post.source,
+      });
       return at;
     },
   ),
 );
 
 export const unqueue = mutation(
-  withSecret({ id: v.id("posts") }, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
-    if (!post || post.status.kind !== "queued")
-      throw new Error("Post is not queued");
-    await ctx.scheduler.cancel(post.status.jobId);
-    await ctx.db.patch(id, { status: { kind: "draft" } });
-  }),
+  withSecret(
+    { id: v.id("posts"), source },
+    async (ctx: MutationCtx, { id, source }) => {
+      const post = await ctx.db.get(id);
+      if (!post || post.status.kind !== "queued")
+        throw new Error("Post is not queued");
+      await ctx.scheduler.cancel(post.status.jobId);
+      await ctx.db.patch(id, {
+        status: { kind: "draft" },
+        source: source ?? post.source,
+      });
+    },
+  ),
 );
 
 export const publishNow = mutation(
-  withSecret({ id: v.id("posts") }, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
-    if (
-      !post ||
-      post.status.kind === "publishing" ||
-      post.status.kind === "published"
-    ) {
-      throw new Error("Post cannot be published from this state");
-    }
-    if (post.status.kind === "queued")
-      await ctx.scheduler.cancel(post.status.jobId);
-    await startPublishing(
-      ctx,
-      post,
-      Date.now(),
-      post.status.kind === "failed" || post.publishedIds.length > 0,
-    );
-  }),
+  withSecret(
+    { id: v.id("posts"), source },
+    async (ctx: MutationCtx, { id, source }) => {
+      const post = await ctx.db.get(id);
+      if (
+        !post ||
+        post.status.kind === "publishing" ||
+        post.status.kind === "published"
+      ) {
+        throw new Error("Post cannot be published from this state");
+      }
+      if (post.status.kind === "queued")
+        await ctx.scheduler.cancel(post.status.jobId);
+      await startPublishing(
+        ctx,
+        { ...post, source: source ?? post.source },
+        Date.now(),
+        post.status.kind === "failed" || post.publishedIds.length > 0,
+      );
+    },
+  ),
 );
 
 export const retry = mutation(
-  withSecret({ id: v.id("posts") }, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
-    if (!post || post.status.kind !== "failed")
-      throw new Error("Only failed posts can be retried");
-    await startPublishing(ctx, post, Date.now(), true);
-  }),
+  withSecret(
+    { id: v.id("posts"), source },
+    async (ctx: MutationCtx, { id, source }) => {
+      const post = await ctx.db.get(id);
+      if (!post || post.status.kind !== "failed")
+        throw new Error("Only failed posts can be retried");
+      await startPublishing(
+        ctx,
+        { ...post, source: source ?? post.source },
+        Date.now(),
+        true,
+      );
+    },
+  ),
 );
 
 export const deletePost = mutation(
-  withSecret({ id: v.id("posts") }, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
-    if (!post) throw new Error("Post not found");
-    if (post.status.kind === "publishing")
-      throw new Error("Cannot delete a publishing post");
-    if (post.status.kind === "queued")
-      await ctx.scheduler.cancel(post.status.jobId);
-    await ctx.db.delete(id);
-  }),
+  withSecret(
+    { id: v.id("posts"), source },
+    async (ctx: MutationCtx, { id }) => {
+      const post = await ctx.db.get(id);
+      if (!post) throw new Error("Post not found");
+      if (post.status.kind === "publishing")
+        throw new Error("Cannot delete a publishing post");
+      if (post.status.kind === "queued")
+        await ctx.scheduler.cancel(post.status.jobId);
+      await ctx.db.delete(id);
+    },
+  ),
 );
 
 export const listQueue = query(
