@@ -131,19 +131,6 @@ export const queue = mutation(
         const [endHour, endMinute] = settings.windowEnd.split(":").map(Number);
         const start = startHour * 60 + startMinute;
         const end = endHour * 60 + endMinute;
-        if (
-          !/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.windowStart) ||
-          !/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.windowEnd) ||
-          !Number.isInteger(start) ||
-          !Number.isInteger(end) ||
-          start < 0 ||
-          end > 1439 ||
-          start > end ||
-          !Number.isInteger(settings.intervalMinutes) ||
-          settings.intervalMinutes < 1
-        ) {
-          throw new Error("Invalid queue window or interval");
-        }
         const clock = new Intl.DateTimeFormat("en-GB", {
           timeZone: settings.timeZone,
           hour: "2-digit",

@@ -320,14 +320,14 @@ export const sweepStuck = internalMutation({
     for (const post of await ctx.db.query("posts").collect()) {
       if (
         post.status.kind === "publishing" &&
-        post.status.startedAt < Date.now() - 10 * 60_000
+        post.status.startedAt < Date.now() - 15 * 60_000
       ) {
         await ctx.db.patch(post._id, {
           status: {
             kind: "failed",
             at: post.status.at,
             error:
-              "Publishing timed out after 10 minutes; retry to check Threads and resume",
+              "Publishing timed out after 15 minutes; retry to check Threads and resume",
           },
         });
       }

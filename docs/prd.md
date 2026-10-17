@@ -66,7 +66,7 @@ Threads has no API for scheduling. Convex holds the queue and calls Threads when
 
 Duplicates are the main risk. Convex runs an action at most once and never retries it. Threads' publish call has no idempotency key. If a publish call times out, Meta may have posted the part anyway. Before retrying that part, check the account's latest posts for the same text, and adopt the id if it is there.
 
-A cron runs every 10 minutes and marks any post stuck in publishing for over 10 minutes as failed. A dead action then shows up as a retryable failure, not a post stuck forever.
+A cron runs every 10 minutes and marks any post stuck in publishing for over 15 minutes as failed. A dead action then shows up as a retryable failure, not a post stuck forever.
 
 Another cron refreshes the 60-day token once a week. If Threads rejects the token (error 190), the account is flagged and a "reconnect" banner appears. Queued posts fail with a clear reason, not silently.
 

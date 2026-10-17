@@ -393,7 +393,7 @@ test("flags token error 190, sweeps a stuck publisher, and refreshes or flags th
     parts: [{ text: "stuck" }],
   });
   await t.mutation(api.posts.publishNow, { secret, id: stuck });
-  vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+  vi.setSystemTime(Date.now() + 15 * 60_000 + 1);
   await t.mutation(internal.publishing.sweepStuck, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(
@@ -402,7 +402,7 @@ test("flags token error 190, sweeps a stuck publisher, and refreshes or flags th
     )?.status,
   ).toMatchObject({
     kind: "failed",
-    error: expect.stringContaining("10 minutes"),
+    error: expect.stringContaining("15 minutes"),
   });
   expect(fake.live).toHaveLength(0);
   fake.failRefresh();
