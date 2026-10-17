@@ -8,7 +8,7 @@ Typefully's free plan caps scheduling at 10 posts a month. One batch from `draft
 
 ## What v1 does
 
-1. **Connect Threads.** One OAuth flow connects the account and also logs you in. Only your Threads user id is allowed in.
+1. **Connect Threads.** One OAuth flow connects the account and also logs you in. Only your Threads user id is allowed in. The flow requests the `threads_basic`, `threads_content_publish`, `threads_manage_replies`, and `threads_read_replies` scopes.
 2. **Draft.** Write a post as one or more parts. More than one part publishes as a thread, each part replying to the one before. Each part has a 500-character counter and an optional image.
 3. **Queue.** "Add to queue" puts the post in the next free slot. You can also pick an exact time, publish now, or pull a post back to drafts.
 4. **Publish.** At the slot time the post goes out. The queue shows each post as draft, queued, publishing, published (with a link), or failed (with the reason and a retry button).

@@ -18,7 +18,7 @@ export const GET: RequestHandler = ({ url, cookies }) => {
   target.search = new URLSearchParams({
     client_id: env.THREADS_APP_ID,
     redirect_uri: `${url.origin}/auth/callback`,
-    scope: "threads_basic,threads_content_publish",
+    scope: "threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies",
     response_type: "code",
     state,
   }).toString();
