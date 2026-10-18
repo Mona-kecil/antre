@@ -6,7 +6,7 @@
 
 <svelte:head><title>antre — Content library</title></svelte:head>
 <main>
-  <header><div><h1>Content library</h1><p>@{data.account.username} · All times in WIB</p></div><a href="/">Queue</a></header>
+  <header><div><h1>Content library</h1><p>@{data.account.username} · All times in WIB</p></div><nav><a href="/">Queue</a> · <a href="/login">Reconnect Threads</a></nav></header>
   {#if !data.posts.length}<p>No published posts yet. Run sync_now through MCP to import from Threads.</p>{/if}
   <div class="table"><table>
     <thead><tr><th>Date (WIB)</th><th>Post</th><th>Topic</th><th>Angle</th><th>Format</th><th>Views</th><th>Likes</th><th>Replies</th><th>Reposts</th><th>Quotes</th><th>Shares</th><th>Engagement</th></tr></thead>

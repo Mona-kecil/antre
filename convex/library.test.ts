@@ -17,7 +17,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("sync pages imports, preserves antre threads without duplicates, refreshes metrics, and repeats without new posts", async () => {
+test("sync pages imports, removes missing older posts only after complete paging, preserves recent posts and drafts, and refreshes metrics", async () => {
   const t = convexTest(schema, modules);
   const existing = await t.run(async (ctx) => {
     await ctx.db.insert("account", {
@@ -39,8 +39,37 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
       },
     });
   });
+  const { missing, recent } = await t.run(async (ctx) => {
+    const missing = await ctx.db.insert("posts", {
+      parts: [{ text: "deleted on Threads" }],
+      publishedIds: ["deleted-root", "deleted-reply"],
+      source: "agent",
+      status: {
+        kind: "published",
+        at: now - 5 * 60_000 - 1,
+        permalink: "https://threads.net/deleted-root",
+      },
+    });
+    const recent = await ctx.db.insert("posts", {
+      parts: [{ text: "recent publication" }],
+      publishedIds: ["recent-root"],
+      source: "web",
+      status: {
+        kind: "published",
+        at: now - 4 * 60_000,
+        permalink: "https://threads.net/recent-root",
+      },
+    });
+    return { missing, recent };
+  });
+  const draft = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "agent",
+    parts: [{ text: "keep draft" }],
+  });
   const calls: string[] = [];
   let permissionError = false;
+  let pagingError = false;
   let publishing = false;
   const post = (id: string, timestamp = "2026-10-17T20:00:00+0000") => ({
     id,
@@ -68,13 +97,19 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
               post("older-external", "2026-10-18T03:58:00Z"),
             ],
           });
-        if (url.searchParams.get("after") === "page2")
+        if (url.searchParams.get("after") === "page2") {
+          if (pagingError)
+            return Response.json(
+              { error: { message: "Paging failed" } },
+              { status: 400 },
+            );
           return Response.json({
             data: [
               post("old-external", "2025-01-01T00:00:00Z"),
               ...(permissionError ? [post("permission-post")] : []),
             ],
           });
+        }
         return Response.json({
           data: [post("antre-root"), post("external")],
           paging: {
@@ -117,13 +152,21 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
   await expect(t.action(api.sync.now, { secret: "wrong" })).rejects.toThrow(
     "Unauthorized",
   );
-  expect(await t.action(api.sync.now, { secret })).toEqual({
+  const first = await t.action(api.sync.now, { secret });
+  expect(await t.run((ctx) => ctx.db.get(missing))).toBeNull();
+  expect(first).toEqual({
     imported: 2,
-    metricsUpdated: 3,
+    removed: 1,
+    metricsUpdated: 4,
     error: null,
   });
   const posts = await t.query(api.posts.listQueue, { secret });
-  expect(posts).toHaveLength(3);
+  expect(posts).toHaveLength(5);
+  expect(posts.find((p) => p._id === recent)?.status.kind).toBe("published");
+  expect(posts.find((p) => p._id === draft)?.status.kind).toBe("draft");
+  expect(
+    await t.query(api.library.searchPosts, { secret, text: "deleted on Threads" }),
+  ).toEqual([]);
   expect(posts.filter((p) => p.publishedIds[0] === "antre-root")).toHaveLength(
     1,
   );
@@ -152,16 +195,46 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
   });
   expect(await t.action(internal.sync.run, {})).toEqual({
     imported: 0,
-    metricsUpdated: 2,
+    removed: 0,
+    metricsUpdated: 3,
     error: null,
   });
-  expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(3);
+  expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(5);
   expect(calls.filter((p) => p === "/v1.0/old-external/insights")).toHaveLength(
     1,
   );
   expect(await t.run((ctx) => ctx.db.query("followers").collect())).toEqual([
     expect.objectContaining({ at: now, count: 1234 }),
   ]);
+  const absentDuringFailure = await t.run((ctx) =>
+    ctx.db.insert("posts", {
+      parts: [{ text: "absent during failed paging" }],
+      publishedIds: ["absent-during-failure"],
+      source: "agent",
+      status: {
+        kind: "published",
+        at: now - 10 * 60_000,
+        permalink: "https://threads.net/absent-during-failure",
+      },
+    }),
+  );
+  const beforeFailure = await t.query(api.posts.listQueue, { secret });
+  pagingError = true;
+  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+    imported: 0,
+    removed: 0,
+    error: expect.stringContaining("Paging failed"),
+  });
+  expect(
+    (await t.query(api.posts.listQueue, { secret })).map((p) => p._id),
+  ).toEqual(beforeFailure.map((p) => p._id));
+  pagingError = false;
+  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+    imported: 0,
+    removed: 1,
+    error: null,
+  });
+  expect(await t.run((ctx) => ctx.db.get(absentDuringFailure))).toBeNull();
   permissionError = true;
   const result = await t.action(api.sync.now, { secret });
   expect(result).toMatchObject({
@@ -189,10 +262,11 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
   );
   expect(await t.action(api.sync.now, { secret })).toMatchObject({
     imported: 1,
+    removed: 3,
     error: null,
   });
   const duringPublishing = await t.query(api.posts.listQueue, { secret });
-  expect(duringPublishing).toHaveLength(6);
+  expect(duringPublishing).toHaveLength(5);
   expect(
     duringPublishing.filter((p) => p.publishedIds[0] === "publishing-root"),
   ).toHaveLength(0);
@@ -224,7 +298,7 @@ test("sync pages imports, preserves antre threads without duplicates, refreshes 
     error: null,
   });
   const afterPublishing = await t.query(api.posts.listQueue, { secret });
-  expect(afterPublishing).toHaveLength(6);
+  expect(afterPublishing).toHaveLength(5);
   expect(
     afterPublishing.filter((p) => p.publishedIds[0] === "publishing-root"),
   ).toMatchObject([

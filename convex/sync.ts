@@ -94,6 +94,25 @@ export const importPage = internalMutation({
   },
 });
 
+export const removeMissing = internalMutation({
+  args: { seenIds: v.array(v.string()), cutoff: v.number() },
+  handler: async (ctx, { seenIds, cutoff }) => {
+    const seen = new Set(seenIds);
+    let removed = 0;
+    for (const post of await ctx.db.query("posts").collect()) {
+      if (
+        post.status.kind === "published" &&
+        post.status.at < cutoff &&
+        !seen.has(post.publishedIds[0])
+      ) {
+        await ctx.db.delete(post._id);
+        removed++;
+      }
+    }
+    return removed;
+  },
+});
+
 export const metricTargets = internalQuery({
   args: {},
   handler: async (ctx) =>
@@ -129,13 +148,16 @@ export const saveFollowers = internalMutation({
 
 type SyncResult = {
   imported: number;
+  removed: number;
   metricsUpdated: number;
   error: string | null;
 };
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<SyncResult> => {
+    const startedAt = Date.now();
     let imported = 0;
+    let removed = 0;
     let metricsUpdated = 0;
     const errors = new Set<string>();
     const account = await ctx.runQuery(internal.publishing.getAccount, {});
@@ -146,6 +168,7 @@ export const run = internalAction({
     )
       return {
         imported,
+        removed,
         metricsUpdated,
         error: "Threads account needs reconnecting",
       };
@@ -156,6 +179,7 @@ export const run = internalAction({
     try {
       let after: string | undefined;
       const seen = new Set<string>();
+      const seenIds = new Set<string>();
       do {
         const parsed = pageSchema.safeParse(
           await threads("me/threads", account.accessToken, {
@@ -167,6 +191,7 @@ export const run = internalAction({
         if (!parsed.success)
           throw new Error("Threads returned invalid posts or pagination");
         const page = parsed.data;
+        for (const post of page.data) seenIds.add(post.id);
         imported += await ctx.runMutation(internal.sync.importPage, {
           posts: page.data.map((p) => ({
             id: p.id,
@@ -186,6 +211,10 @@ export const run = internalAction({
           throw new Error("Threads repeated a pagination cursor");
         if (after) seen.add(after);
       } while (after);
+      removed = await ctx.runMutation(internal.sync.removeMissing, {
+        seenIds: [...seenIds],
+        cutoff: startedAt - 5 * 60_000,
+      });
     } catch (error) {
       recordError("Post import", error);
     }
@@ -237,6 +266,7 @@ export const run = internalAction({
     }
     return {
       imported,
+      removed,
       metricsUpdated,
       error: errors.size ? [...errors].join("; ") : null,
     };

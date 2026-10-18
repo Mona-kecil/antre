@@ -293,7 +293,7 @@ const handler = createMcpHandler(
       "sync_now",
       {
         description:
-          "Import top-level Threads posts, refresh recent/missing metrics, and snapshot followers. Returns imported, metricsUpdated, and any import or insights permission error",
+          "Import top-level Threads posts, remove published posts missing from a complete sync if older than 5 minutes, refresh recent/missing metrics, and snapshot followers. Returns imported, removed, metricsUpdated, and any import or insights permission error",
         inputSchema: z.object({}),
       },
       async () => {
