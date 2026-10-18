@@ -6,6 +6,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { convex } from "#lib/server/convex.ts";
 import { wib } from "#lib/time.ts";
+import { IMAGE_TYPES } from "../../../convex/lib/media";
+import { decodeImage, downloadImage, MAX_IMAGE_BASE64_LENGTH } from "./images";
 import type { RequestHandler } from "./$types";
 
 const id = z
@@ -68,9 +70,82 @@ function result(value: unknown) {
 const handler = createMcpHandler(
   (server) => {
     server.registerTool(
+      "upload_image",
+      {
+        description:
+          "Upload a JPEG or PNG image (1 byte–8 MB) from exactly one public HTTP(S) url or raw base64 + contentType. URL downloads time out after 10 seconds. Vercel caps request bodies near 4.5 MB, so for base64 images over about 3 MB use image_upload_url instead. Returns imageId and previewUrl; use imageId in a create_draft/update_draft part, then verify with search_posts fullParts=true or list_queue. SVG is not accepted; export PNG.",
+        inputSchema: z
+          .strictObject({
+            url: z.url({ protocol: /^https?$/ }).optional(),
+            base64: z.string().min(1).max(MAX_IMAGE_BASE64_LENGTH).optional(),
+            contentType: z.enum(IMAGE_TYPES).optional(),
+          })
+          .refine(
+            (input) =>
+              input.url !== undefined
+                ? input.base64 === undefined && input.contentType === undefined
+                : input.base64 !== undefined && input.contentType !== undefined,
+            "Provide exactly one of {url} or {base64, contentType}",
+          ),
+      },
+      async ({ url, base64, contentType }) => {
+        const image =
+          url !== undefined
+            ? await downloadImage(url)
+            : base64 !== undefined && contentType !== undefined
+              ? decodeImage(base64, contentType)
+              : undefined;
+        if (!image) throw new Error("Provide {url} or {base64, contentType}");
+        const { client, secret } = convex();
+        const uploadUrl = await client.mutation(api.images.uploadUrl, {
+          secret,
+        });
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": image.type },
+          body: image,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) throw new Error("Image upload failed");
+        const { storageId } = z
+          .object({ storageId: z.string().min(1) })
+          .parse(await response.json());
+        // Convex validates the storage ID and its metadata before returning a preview.
+        return result(
+          await client.query(api.images.preview, {
+            secret,
+            imageId: storageId as Id<"_storage">,
+          }),
+        );
+      },
+    );
+    server.registerTool(
+      "image_upload_url",
+      {
+        description:
+          "Get a one-time Convex upload URL and a curl example for a local JPEG/PNG file (1 byte–8 MB). POST the file to uploadUrl, then use the returned storageId as imageId in a create_draft/update_draft part. Verify with search_posts fullParts=true or list_queue. SVG is not accepted; export PNG.",
+        inputSchema: z.strictObject({}),
+      },
+      async () => {
+        const { client, secret } = convex();
+        const uploadUrl = await client.mutation(api.images.uploadUrl, {
+          secret,
+        });
+        return result({
+          uploadUrl,
+          curl: `curl -X POST -H 'Content-Type: image/png' --data-binary @file.png '${uploadUrl.replaceAll("'", "'\\''")}'`,
+          response: {
+            storageId:
+              "Use this value as imageId in a create_draft/update_draft part",
+          },
+        });
+      },
+    );
+    server.registerTool(
       "list_queue",
       {
-        description: "List drafts and posts, with times in ISO and WIB",
+        description:
+          "List drafts and posts, with times in ISO and WIB and imageUrl on image parts to verify attachments",
         inputSchema: z.object({ days: z.number().positive().optional() }),
       },
       async ({ days }) => {
@@ -86,7 +161,8 @@ const handler = createMcpHandler(
     server.registerTool(
       "create_draft",
       {
-        description: "Create a Threads draft",
+        description:
+          "Create a Threads draft. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
         inputSchema: z.object({ parts, meta }),
       },
       async ({ parts, meta }) => {
@@ -104,7 +180,8 @@ const handler = createMcpHandler(
     server.registerTool(
       "update_draft",
       {
-        description: "Edit a draft or the unpublished parts of a failed post",
+        description:
+          "Edit a draft or the unpublished parts of a failed post. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
         inputSchema: z.object({ id, parts: parts.optional(), meta }),
       },
       async ({ id, parts, meta }) => {
@@ -248,7 +325,7 @@ const handler = createMcpHandler(
       "search_posts",
       {
         description:
-          "Search library; tags are codes from taxonomy. Dates/times without offsets use Asia/Jakarta (WIB); until dates include the whole day, until times are exclusive. Sort descending. Engagement = (likes + replies + reposts + quotes) / views; null without positive views",
+          "Search library; tags are codes from taxonomy. fullParts=true includes imageUrl on image parts to verify attachments. Dates/times without offsets use Asia/Jakarta (WIB); until dates include the whole day, until times are exclusive. Sort descending. Engagement = (likes + replies + reposts + quotes) / views; null without positive views",
         inputSchema: z.object({
           ...dateRange,
           status: z
@@ -293,11 +370,12 @@ const handler = createMcpHandler(
       "list_replies",
       {
         description:
-          "List replies newest first with draft (null if none), parent and root post text. Set drafted=true to list pending drafts. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. limit defaults to 50. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
+          "List replies newest first with draft (null if none), parent and root post text. Set drafted=true to list pending drafts. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. offset defaults to 0; limit defaults to 50; total counts matches before paging. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
         inputSchema: z.object({
           unanswered: z.boolean().optional(),
           drafted: z.boolean().optional(),
           postId: id.optional(),
+          offset: z.number().int().nonnegative().optional(),
           limit: z.number().int().positive().optional(),
         }),
       },

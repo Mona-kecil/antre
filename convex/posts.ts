@@ -9,16 +9,23 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { withSecret } from "./auth";
+import { partsWithImages, validateImage } from "./lib/media";
 import { meta, part } from "./schema";
 
 const source = v.optional(v.union(v.literal("web"), v.literal("agent")));
 
-function validateParts(parts: Doc<"posts">["parts"]) {
+async function validateParts(ctx: MutationCtx, parts: Doc<"posts">["parts"]) {
   if (
     parts.length === 0 ||
     parts.some(({ text }) => text.trim().length === 0 || [...text].length > 500)
   ) {
     throw new Error("Use at least one part, each with 1–500 characters");
+  }
+  for (const { imageId } of parts) {
+    if (!imageId) continue;
+    const image = await ctx.db.system.get(imageId);
+    if (!image) throw new Error("Image not found in storage");
+    validateImage(image);
   }
 }
 
@@ -48,7 +55,7 @@ export const createDraft = mutation(
       source: v.union(v.literal("web"), v.literal("agent")),
     },
     async (ctx: MutationCtx, args) => {
-      validateParts(args.parts);
+      await validateParts(ctx, args.parts);
       return await ctx.db.insert("posts", {
         parts: args.parts,
         meta: args.meta,
@@ -77,7 +84,7 @@ export const updateDraft = mutation(
         throw new Error("Only drafts and failed posts can be edited");
       }
       if (args.parts) {
-        validateParts(args.parts);
+        await validateParts(ctx, args.parts);
         for (let i = 0; i < post.publishedIds.length; i++) {
           if (
             args.parts[i]?.text !== post.parts[i].text ||
@@ -251,13 +258,19 @@ export const listQueue = query(
         throw new Error("Days must be positive");
       const until =
         days === undefined ? Infinity : Date.now() + days * 86_400_000;
-      return (await ctx.db.query("posts").collect())
+      const posts = (await ctx.db.query("posts").collect())
         .filter(({ status }) => status.kind === "draft" || status.at <= until)
         .sort(
           (a, b) =>
             (a.status.kind === "draft" ? a._creationTime : a.status.at) -
             (b.status.kind === "draft" ? b._creationTime : b.status.at),
         );
+      return await Promise.all(
+        posts.map(async (post) => ({
+          ...post,
+          parts: await partsWithImages(ctx, post.parts),
+        })),
+      );
     },
   ),
 );

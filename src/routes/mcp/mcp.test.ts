@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
+import { storeTestImage } from "../../../convex/testing/storage";
 import { expect, test, vi } from "vitest";
 import {
   PROTOCOL_VERSION_META_KEY,
@@ -22,6 +23,122 @@ const modules = import.meta.glob([
 ]);
 
 vi.mock("$app/env/private", () => ({ MCP_TOKEN: "test-mcp-token" }));
+
+async function invokeTool(name: string, args: unknown) {
+  const response = await POST({
+    request: new Request("https://antre.example/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": name,
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2026-07-28",
+        Authorization: "Bearer test-mcp-token",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name,
+          arguments: args,
+          _meta: {
+            [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
+            [CLIENT_CAPABILITIES_META_KEY]: {},
+          },
+        },
+      }),
+    }),
+  } as Parameters<typeof POST>[0]);
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  return JSON.parse(
+    text.startsWith("event:") ? text.split("data: ")[1].trim() : text,
+  );
+}
+
+test("MCP uploads base64 to Convex storage, attaches the image, and rejects invalid inputs before upload", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  const upload = vi.fn(async (input: string, init: RequestInit) => {
+    expect(input).toMatch(/^https?:\/\//);
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Content-Type")).toBe("image/png");
+    expect(init.body).toBeInstanceOf(Blob);
+    if (!(init.body instanceof Blob)) throw new Error("Expected image blob");
+    expect(Buffer.from(await init.body.arrayBuffer()).toString("base64")).toBe(
+      png,
+    );
+    const image = init.body;
+    return Response.json({
+      storageId: await t.run((ctx) => storeTestImage(ctx, image)),
+    });
+  });
+  vi.stubGlobal("fetch", upload);
+  try {
+    const response = await invokeTool("upload_image", {
+      base64: png,
+      contentType: "image/png",
+    });
+    expect(response.result.isError).not.toBe(true);
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image).toEqual({
+      imageId: expect.any(String),
+      previewUrl: expect.stringMatching(/^https?:\/\//),
+    });
+    const draftResponse = await invokeTool("create_draft", {
+      parts: [{ text: "Attached PNG", imageId: image.imageId }],
+    });
+    expect(draftResponse.result.isError).not.toBe(true);
+    const { id } = JSON.parse(draftResponse.result.content[0].text);
+    expect(
+      await t.query(api.library.searchPosts, {
+        secret: "test-secret",
+        fullParts: true,
+      }),
+    ).toMatchObject([
+      { id, parts: [{ imageId: image.imageId, imageUrl: image.previewUrl }] },
+    ]);
+    for (const args of [
+      { base64: png, contentType: "image/svg+xml" },
+      { base64: png, contentType: "image/webp" },
+      { base64: "not base64!", contentType: "image/png" },
+      { base64: png },
+      {
+        url: "https://example.com/image.png",
+        base64: png,
+        contentType: "image/png",
+      },
+      { url: "https://example.com/image.png", contentType: "image/png" },
+      { url: "file:///tmp/image.png" },
+      { url: "http://127.0.0.1/image.png" },
+      { url: "http://[::1]/image.png" },
+      { url: "http://169.254.169.254/image.png" },
+      {},
+    ]) {
+      const invalid = await invokeTool("upload_image", args);
+      expect(invalid.result.isError, JSON.stringify(invalid)).toBe(true);
+    }
+    expect(upload).toHaveBeenCalledTimes(1);
+    const direct = await invokeTool("image_upload_url", {});
+    expect(direct.result.isError).not.toBe(true);
+    const info = JSON.parse(direct.result.content[0].text);
+    expect(info.uploadUrl).toMatch(/^https?:\/\//);
+    expect(info.curl).toBe(
+      `curl -X POST -H 'Content-Type: image/png' --data-binary @file.png '${info.uploadUrl}'`,
+    );
+    expect(info.response.storageId).toContain("imageId");
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
 
 test("MCP rejects missing or wrong bearer tokens, then initializes and lists library and queue tools", async () => {
   const call = (method: string, token?: string) =>
@@ -71,6 +188,8 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
     text.startsWith("event:") ? text.split("data: ")[1].trim() : text,
   );
   expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+    "upload_image",
+    "image_upload_url",
     "list_queue",
     "create_draft",
     "update_draft",
@@ -125,37 +244,7 @@ test("MCP tags and searches published posts through Convex", async () => {
       }),
     );
     const call = async (name: string, args: unknown) => {
-      const response = await POST({
-        request: new Request("https://antre.example/mcp", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Mcp-Method": "tools/call",
-            "Mcp-Name": name,
-            Accept: "application/json, text/event-stream",
-            "MCP-Protocol-Version": "2026-07-28",
-            Authorization: "Bearer test-mcp-token",
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "tools/call",
-            params: {
-              name,
-              arguments: args,
-              _meta: {
-                [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
-                [CLIENT_CAPABILITIES_META_KEY]: {},
-              },
-            },
-          }),
-        }),
-      } as Parameters<typeof POST>[0]);
-      const text = await response.text();
-      expect(response.status, text).toBe(200);
-      const body = JSON.parse(
-        text.startsWith("event:") ? text.split("data: ")[1].trim() : text,
-      );
+      const body = await invokeTool(name, args);
       expect(body.result.isError).not.toBe(true);
       return JSON.parse(body.result.content[0].text);
     };
@@ -208,6 +297,7 @@ test("MCP tags and searches published posts through Convex", async () => {
       });
     });
     expect(await call("list_replies", {})).toEqual({
+      total: 1,
       syncedAt: "2026-10-18T01:00:00.000Z",
       replies: [
         {

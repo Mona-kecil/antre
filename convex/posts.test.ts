@@ -2,6 +2,8 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { MAX_IMAGE_BYTES } from "./lib/media";
+import { storeTestImage } from "./testing/storage";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
 const secret = "test-secret";
@@ -170,6 +172,90 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test("validates stored images when creating and updating drafts and returns image previews", async () => {
+  const t = convexTest(schema, modules);
+  const png = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+    ),
+    (character) => character.charCodeAt(0),
+  );
+  const store = (blob: Blob) => t.run((ctx) => storeTestImage(ctx, blob));
+  const imageId = await store(new Blob([png], { type: "image/png" }));
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "agent",
+    parts: [{ text: "PNG draft", imageId }],
+  });
+  const preview = await t.query(api.images.preview, { secret, imageId });
+  expect(preview).toEqual({
+    imageId,
+    previewUrl: expect.stringMatching(/^https?:\/\//),
+  });
+  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    {
+      _id: id,
+      parts: [{ text: "PNG draft", imageId, imageUrl: preview.previewUrl }],
+    },
+  ]);
+  expect(
+    await t.query(api.library.searchPosts, { secret, fullParts: true }),
+  ).toMatchObject([
+    {
+      id,
+      parts: [{ text: "PNG draft", imageId, imageUrl: preview.previewUrl }],
+    },
+  ]);
+  for (const [blob, message] of [
+    [new Blob(["text"], { type: "text/plain" }), "JPEG or PNG"],
+    [new Blob([png], { type: "image/webp" }), "JPEG or PNG"],
+    [
+      new Blob([new Uint8Array(MAX_IMAGE_BYTES + 1)], { type: "image/png" }),
+      "8 MB",
+    ],
+    [new Blob([], { type: "image/png" }), "1 byte"],
+  ] as const) {
+    const invalidId = await store(blob);
+    await expect(
+      t.mutation(api.posts.createDraft, {
+        secret,
+        source: "agent",
+        parts: [{ text: "bad", imageId: invalidId }],
+      }),
+    ).rejects.toThrow(message);
+    await expect(
+      t.mutation(api.posts.updateDraft, {
+        secret,
+        id,
+        parts: [{ text: "bad", imageId: invalidId }],
+      }),
+    ).rejects.toThrow(message);
+  }
+  // The size boundary is inclusive, and metadata-only edits leave existing media alone.
+  const maximum = await store(
+    new Blob([new Uint8Array(MAX_IMAGE_BYTES)], { type: "image/jpeg" }),
+  );
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    parts: [{ text: "JPEG draft", imageId: maximum }],
+  });
+  await t.run((ctx) => ctx.storage.delete(maximum));
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    meta: { hook: "changed" },
+  });
+  await expect(
+    t.mutation(api.posts.createDraft, {
+      secret,
+      source: "agent",
+      parts: [{ text: "deleted", imageId: maximum }],
+    }),
+  ).rejects.toThrow("Image not found");
+  expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(1);
+});
+
 test("queues consecutive WIB slots, spills after noon, and publishes each scheduled post", async () => {
   const { t, fake } = await setup();
   const ids = [];
@@ -215,7 +301,7 @@ test("queues consecutive WIB slots, spills after noon, and publishes each schedu
 test("publishes a three-part reply chain with an image from Convex storage", async () => {
   const { t, fake } = await setup();
   const image = new Blob(["image"], { type: "image/png" });
-  const imageId = await t.run(async (ctx) => await ctx.storage.store(image));
+  const imageId = await t.run((ctx) => storeTestImage(ctx, image));
   const id = await t.mutation(api.posts.createDraft, {
     secret,
     source: "web",

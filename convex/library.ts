@@ -8,6 +8,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { withSecret } from "./auth";
+import { partsWithImages } from "./lib/media";
 import { dimension, meta } from "./schema";
 
 const range = { since: v.optional(v.string()), until: v.optional(v.string()) };
@@ -161,21 +162,145 @@ export const searchPosts = query(
           : args.sort === "engagement"
             ? (engagement(post) ?? -1)
             : date(post);
-      return posts
-        .sort((a, b) => score(b) - score(a) || date(b) - date(a))
-        .slice(0, limit)
-        .map((post) => ({
+      return await Promise.all(
+        posts
+          .sort((a, b) => score(b) - score(a) || date(b) - date(a))
+          .slice(0, limit)
+          .map(async (post) => ({
+            id: post._id,
+            status: post.status.kind,
+            date: new Date(date(post)).toISOString(),
+            text: post.parts[0]?.text ?? "",
+            ...(args.fullParts
+              ? { parts: await partsWithImages(ctx, post.parts) }
+              : {}),
+            meta: post.meta ?? {},
+            metrics: post.metrics ?? null,
+            engagement: engagement(post),
+            permalink:
+              post.status.kind === "published" ? post.status.permalink : null,
+          })),
+      );
+    },
+  ),
+);
+
+export const page = query(
+  withSecret(
+    {
+      view: v.union(
+        v.literal("drafts"),
+        v.literal("scheduled"),
+        v.literal("published"),
+        v.literal("failed"),
+      ),
+      topic: v.optional(v.string()),
+      angle: v.optional(v.string()),
+      format: v.optional(v.string()),
+      text: v.optional(v.string()),
+      sort: v.optional(
+        v.union(v.literal("date"), v.literal("views"), v.literal("engagement")),
+      ),
+      offset: v.optional(v.number()),
+      limit: v.optional(v.number()),
+    },
+    async (ctx: QueryCtx, args) => {
+      const offset = args.offset ?? 0;
+      const limit = args.limit ?? 25;
+      if (!Number.isSafeInteger(offset) || offset < 0)
+        throw new Error("Offset must be a nonnegative integer");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+        throw new Error("Limit must be an integer between 1 and 100");
+      if (args.view !== "published" && args.sort && args.sort !== "date")
+        throw new Error(
+          "Views and engagement sorting require the published view",
+        );
+
+      const posts = await ctx.db.query("posts").collect();
+      const counts = { drafts: 0, scheduled: 0, published: 0, failed: 0 };
+      const viewOf = (post: Doc<"posts">) => {
+        switch (post.status.kind) {
+          case "draft":
+            return "drafts";
+          case "queued":
+          case "publishing":
+            return "scheduled";
+          case "published":
+            return "published";
+          case "failed":
+            return "failed";
+        }
+      };
+      for (const post of posts) counts[viewOf(post)]++;
+      const text = args.text?.toLowerCase();
+      const inView = posts.filter(
+        (post) =>
+          viewOf(post) === args.view &&
+          (text === undefined ||
+            [
+              ...post.parts.map((part) => part.text),
+              post.meta?.hook ?? "",
+              post.meta?.notes ?? "",
+            ].some((value) => value.toLowerCase().includes(text))),
+      );
+      const dimensions = ["topic", "angle", "format"] as const;
+      const matches = (
+        post: Doc<"posts">,
+        ignore?: (typeof dimensions)[number],
+      ) =>
+        dimensions.every(
+          (dimension) =>
+            dimension === ignore ||
+            args[dimension] === undefined ||
+            post.meta?.[dimension] === args[dimension],
+        );
+      const facets: Record<
+        (typeof dimensions)[number],
+        Record<string, number>
+      > = {
+        topic: {},
+        angle: {},
+        format: {},
+      };
+      for (const dimension of dimensions) {
+        const counts = new Map<string, number>();
+        for (const post of inView) {
+          const code = post.meta?.[dimension];
+          if (code !== undefined && matches(post, dimension))
+            counts.set(code, (counts.get(code) ?? 0) + 1);
+        }
+        facets[dimension] = Object.fromEntries(
+          [...counts].sort(([a], [b]) => a.localeCompare(b)),
+        );
+      }
+      const filtered = inView.filter((post) => matches(post));
+      const score = (post: Doc<"posts">) =>
+        args.sort === "views"
+          ? (post.metrics?.views ?? -1)
+          : args.sort === "engagement"
+            ? (engagement(post) ?? -1)
+            : date(post);
+      const direction = args.view === "scheduled" ? 1 : -1;
+      filtered.sort(
+        (a, b) =>
+          direction * (score(a) - score(b)) ||
+          direction * (date(a) - date(b)) ||
+          b._creationTime - a._creationTime ||
+          a._id.localeCompare(b._id),
+      );
+      const items = await Promise.all(
+        filtered.slice(offset, offset + limit).map(async (post) => ({
           id: post._id,
-          status: post.status.kind,
-          date: new Date(date(post)).toISOString(),
-          text: post.parts[0]?.text ?? "",
-          ...(args.fullParts ? { parts: post.parts } : {}),
+          status: post.status,
+          parts: await partsWithImages(ctx, post.parts),
           meta: post.meta ?? {},
+          source: post.source,
           metrics: post.metrics ?? null,
           engagement: engagement(post),
-          permalink:
-            post.status.kind === "published" ? post.status.permalink : null,
-        }));
+          _creationTime: post._creationTime,
+        })),
+      );
+      return { items, total: filtered.length, counts, facets };
     },
   ),
 );

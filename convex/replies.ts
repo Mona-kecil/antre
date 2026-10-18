@@ -193,10 +193,14 @@ export const list = query(
       unanswered: v.optional(v.boolean()),
       drafted: v.optional(v.boolean()),
       postId: v.optional(v.id("posts")),
+      offset: v.optional(v.number()),
       limit: v.optional(v.number()),
     },
     async (ctx: QueryCtx, args) => {
       const limit = args.limit ?? 50;
+      const offset = args.offset ?? 0;
+      if (!Number.isSafeInteger(offset) || offset < 0)
+        throw new Error("Offset must be a nonnegative integer");
       if (!Number.isInteger(limit) || limit < 1)
         throw new Error("Limit must be a positive integer");
       const replies = await ctx.db.query("replies").collect();
@@ -208,45 +212,48 @@ export const list = query(
         (await ctx.db.query("posts").collect()).map((post) => [post._id, post]),
       );
       const account = await ctx.db.query("account").unique();
+      const filtered = replies
+        .filter(
+          (reply) =>
+            posts.has(reply.postId) &&
+            (!args.postId || reply.postId === args.postId) &&
+            (!args.drafted ||
+              reply.draft !== undefined ||
+              reply.sending !== undefined) &&
+            (!(args.unanswered ?? true) ||
+              (!reply.mine && !reply.hidden && !answered.has(reply.threadsId))),
+        )
+        .sort(
+          (a, b) =>
+            b.at - a.at ||
+            b._creationTime - a._creationTime ||
+            a._id.localeCompare(b._id),
+        );
       return {
+        total: filtered.length,
         syncedAt:
           account?.repliesSyncedAt === undefined
             ? null
             : new Date(account.repliesSyncedAt).toISOString(),
-        replies: replies
-          .filter(
-            (reply) =>
-              posts.has(reply.postId) &&
-              (!args.postId || reply.postId === args.postId) &&
-              (!args.drafted ||
-                reply.draft !== undefined ||
-                reply.sending !== undefined) &&
-              (!(args.unanswered ?? true) ||
-                (!reply.mine &&
-                  !reply.hidden &&
-                  !answered.has(reply.threadsId))),
-          )
-          .sort((a, b) => b.at - a.at)
-          .slice(0, limit)
-          .map((reply) => {
-            const post = posts.get(reply.postId);
-            return {
-              replyId: reply.threadsId,
-              username: reply.username,
-              text: reply.text,
-              at: new Date(reply.at).toISOString(),
-              permalink: reply.permalink ?? null,
-              hidden: reply.hidden,
-              draft: reply.draft ?? null,
-              sending: reply.sending ?? null,
-              parentText:
-                reply.repliedToId === post?.publishedIds[0]
-                  ? (post?.parts[0]?.text ?? "")
-                  : (byId.get(reply.repliedToId ?? "")?.text ?? null),
-              postId: reply.postId,
-              postText: post?.parts[0]?.text ?? "",
-            };
-          }),
+        replies: filtered.slice(offset, offset + limit).map((reply) => {
+          const post = posts.get(reply.postId);
+          return {
+            replyId: reply.threadsId,
+            username: reply.username,
+            text: reply.text,
+            at: new Date(reply.at).toISOString(),
+            permalink: reply.permalink ?? null,
+            hidden: reply.hidden,
+            draft: reply.draft ?? null,
+            sending: reply.sending ?? null,
+            parentText:
+              reply.repliedToId === post?.publishedIds[0]
+                ? (post?.parts[0]?.text ?? "")
+                : (byId.get(reply.repliedToId ?? "")?.text ?? null),
+            postId: reply.postId,
+            postText: post?.parts[0]?.text ?? "",
+          };
+        }),
       };
     },
   ),

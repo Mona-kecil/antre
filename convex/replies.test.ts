@@ -178,6 +178,7 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   );
 
   expect(await t.query(api.replies.list, { secret })).toEqual({
+    total: 0,
     syncedAt: null,
     replies: [],
   });
@@ -193,6 +194,7 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   });
   const list = await t.query(api.replies.list, { secret });
   expect(list.syncedAt).toBe(new Date(now).toISOString());
+  expect(list.total).toBe(2);
   expect(list.replies).toEqual([
     {
       replyId: "bob",
@@ -226,6 +228,22 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
       (r) => r.replyId,
     ),
   ).toEqual(["bob"]);
+  const secondPage = await t.query(api.replies.list, {
+    secret,
+    postId,
+    offset: 1,
+    limit: 1,
+  });
+  expect(secondPage.total).toBe(2);
+  expect(secondPage.replies.map((reply) => reply.replyId)).toEqual(["alice"]);
+  expect(await t.query(api.replies.list, { secret, offset: 2 })).toMatchObject({
+    total: 2,
+    replies: [],
+  });
+  for (const offset of [-1, 0.5])
+    await expect(t.query(api.replies.list, { secret, offset })).rejects.toThrow(
+      "Offset",
+    );
   expect(
     (await t.query(api.replies.list, { secret, unanswered: false })).replies,
   ).toHaveLength(4);
