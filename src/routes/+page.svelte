@@ -41,7 +41,7 @@
 <svelte:head><title>antre — Threads queue</title><meta name="description" content="Draft and schedule your Threads posts." /></svelte:head>
 
 <main>
-  <header><div><h1>antre<span> / Threads queue</span></h1><p>@{data.account.username} · All times in WIB</p></div><nav><a href="/library">Library</a> · <a href="/">Refresh</a> · <a href="/login">Reconnect Threads</a></nav></header>
+  <header><div><h1>antre<span> / Threads queue</span></h1><p>@{data.account.username} · All times in WIB</p></div><nav><a href="/replies">Replies</a> · <a href="/library">Library</a> · <a href="/">Refresh</a> · <a href="/login">Reconnect Threads</a></nav></header>
   {#if data.account.needsReconnect}<aside>Threads needs reconnecting. <a href="/login">Reconnect account</a></aside>{/if}
   {#if form?.error}<p role="alert" class="error">{form.error}</p>{/if}
   {#if form?.message}<p role="status">{form.message}</p>{/if}

@@ -41,7 +41,12 @@ export const replyFields = {
 };
 
 export default defineSchema({
-  replies: defineTable(replyFields).index("by_threadsId", ["threadsId"]),
+  replies: defineTable({
+    ...replyFields,
+    draft: v.optional(v.string()),
+    sending: v.optional(v.string()),
+    sendingAt: v.optional(v.number()),
+  }).index("by_threadsId", ["threadsId"]),
   taxonomy: defineTable({
     dimension,
     code: v.string(),

@@ -84,10 +84,25 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
     "search_posts",
     "insights",
     "list_replies",
-    "reply",
+    "draft_reply",
+    "send_reply",
+    "discard_reply_draft",
     "hide_reply",
     "sync_now",
   ]);
+  const send = body.result.tools.find(
+    (tool: { name: string }) => tool.name === "send_reply",
+  );
+  expect(Object.keys(send.inputSchema.properties)).toEqual(["replyId", "text"]);
+  expect(send.inputSchema.required).toEqual(["replyId", "text"]);
+  expect(send.inputSchema.properties.text.description).toBe(
+    "the exact draft text the human saw and approved; must match the stored draft",
+  );
+  expect(send.annotations).toMatchObject({
+    destructiveHint: true,
+    openWorldHint: true,
+  });
+  expect(send.description).toContain("explicitly told you to send it");
 });
 
 test("MCP tags and searches published posts through Convex", async () => {
@@ -202,6 +217,8 @@ test("MCP tags and searches published posts through Convex", async () => {
           at: "2026-10-18T00:30:00.000Z",
           permalink: null,
           hidden: false,
+          draft: null,
+          sending: null,
           parentText: "Creative library post",
           postId: id,
           postText: "Creative library post",
@@ -211,6 +228,24 @@ test("MCP tags and searches published posts through Convex", async () => {
     expect(
       await call("list_replies", { postId: id, unanswered: false, limit: 1 }),
     ).toMatchObject({ replies: [{ replyId: "reader-reply" }] });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    expect(await call("list_replies", { drafted: true })).toMatchObject({
+      replies: [],
+    });
+    await call("draft_reply", {
+      replyId: "reader-reply",
+      text: "Reviewed answer",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await call("list_replies", { drafted: true })).toMatchObject({
+      replies: [{ replyId: "reader-reply", draft: "Reviewed answer" }],
+    });
+    await call("discard_reply_draft", { replyId: "reader-reply" });
+    expect(await call("list_replies", { drafted: true })).toMatchObject({
+      replies: [],
+    });
+    expect(fetch).not.toHaveBeenCalled();
     expect(
       await t.query(api.library.searchPosts, {
         secret: "test-secret",
@@ -218,6 +253,7 @@ test("MCP tags and searches published posts through Convex", async () => {
       }),
     ).toHaveLength(1);
   } finally {
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
   }

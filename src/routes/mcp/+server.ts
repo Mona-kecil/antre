@@ -293,9 +293,10 @@ const handler = createMcpHandler(
       "list_replies",
       {
         description:
-          "List replies newest first with parent and root post text. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. limit defaults to 50. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
+          "List replies newest first with draft (null if none), parent and root post text. Set drafted=true to list pending drafts. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. limit defaults to 50. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
         inputSchema: z.object({
           unanswered: z.boolean().optional(),
+          drafted: z.boolean().optional(),
           postId: id.optional(),
           limit: z.number().int().positive().optional(),
         }),
@@ -308,10 +309,10 @@ const handler = createMcpHandler(
       },
     );
     server.registerTool(
-      "reply",
+      "draft_reply",
       {
         description:
-          "Publish a text reply now to a stored replyId; marks it answered without waiting for sync. Returns the new replyId and permalink if available",
+          "Save a draft answer to a stored replyId for human review; never publishes",
         inputSchema: z.object({
           replyId: z.string().min(1),
           text: z
@@ -325,7 +326,42 @@ const handler = createMcpHandler(
       async (args) => {
         const { client, secret } = convex();
         return result(
-          await client.action(api.replies.reply, { secret, ...args }),
+          await client.mutation(api.replies.saveDraft, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "send_reply",
+      {
+        description:
+          "Publishes the stored draft verbatim. Call ONLY after the human has seen that exact draft text in this conversation and explicitly told you to send it. Never call on your own initiative. If the draft changes, it must be shown again. Returns the new replyId and permalink if available",
+        inputSchema: z.object({
+          replyId: z.string().min(1),
+          text: z
+            .string()
+            .describe(
+              "the exact draft text the human saw and approved; must match the stored draft",
+            ),
+        }),
+        annotations: { destructiveHint: true, openWorldHint: true },
+      },
+      async ({ replyId, text }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.action(api.replies.sendDraft, { secret, replyId, text }),
+        );
+      },
+    );
+    server.registerTool(
+      "discard_reply_draft",
+      {
+        description: "Discard a stored reply draft without publishing",
+        inputSchema: z.object({ replyId: z.string().min(1) }),
+      },
+      async ({ replyId }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.replies.discardDraft, { secret, replyId }),
         );
       },
     );

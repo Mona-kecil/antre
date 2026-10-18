@@ -7,6 +7,8 @@ import {
   internalMutation,
   internalQuery,
   query,
+  mutation,
+  type MutationCtx,
   type ActionCtx,
   type QueryCtx,
 } from "./_generated/server";
@@ -189,6 +191,7 @@ export const list = query(
   withSecret(
     {
       unanswered: v.optional(v.boolean()),
+      drafted: v.optional(v.boolean()),
       postId: v.optional(v.id("posts")),
       limit: v.optional(v.number()),
     },
@@ -215,6 +218,9 @@ export const list = query(
             (reply) =>
               posts.has(reply.postId) &&
               (!args.postId || reply.postId === args.postId) &&
+              (!args.drafted ||
+                reply.draft !== undefined ||
+                reply.sending !== undefined) &&
               (!(args.unanswered ?? true) ||
                 (!reply.mine &&
                   !reply.hidden &&
@@ -231,6 +237,8 @@ export const list = query(
               at: new Date(reply.at).toISOString(),
               permalink: reply.permalink ?? null,
               hidden: reply.hidden,
+              draft: reply.draft ?? null,
+              sending: reply.sending ?? null,
               parentText:
                 reply.repliedToId === post?.publishedIds[0]
                   ? (post?.parts[0]?.text ?? "")
@@ -244,72 +252,160 @@ export const list = query(
   ),
 );
 
+async function getReply(ctx: QueryCtx, replyId: string) {
+  const reply = await ctx.db
+    .query("replies")
+    .withIndex("by_threadsId", (q) => q.eq("threadsId", replyId))
+    .unique();
+  if (!reply || !(await ctx.db.get(reply.postId)))
+    throw new Error("Reply not found; run sync_now");
+  return reply;
+}
+
 export const get = internalQuery({
   args: { replyId: v.string() },
-  handler: async (ctx, { replyId }) => {
-    const reply = await ctx.db
-      .query("replies")
-      .withIndex("by_threadsId", (q) => q.eq("threadsId", replyId))
-      .unique();
-    if (!reply || !(await ctx.db.get(reply.postId)))
-      throw new Error("Reply not found; run sync_now");
-    return reply;
+  handler: async (ctx, { replyId }) => getReply(ctx, replyId),
+});
+
+export const saveDraft = mutation(
+  withSecret(
+    { replyId: v.string(), text: v.string() },
+    async (ctx: MutationCtx, { replyId, text }) => {
+      if (!text.trim() || [...text].length > 500)
+        throw new Error("Use 1–500 characters");
+      const target = await getReply(ctx, replyId);
+      if (target.mine)
+        throw new Error("Cannot draft an answer to your own reply");
+      if (target.sending !== undefined)
+        throw new Error(
+          "A send is in progress for this reply; discard it if stuck for 15 minutes",
+        );
+      await ctx.db.patch(target._id, { draft: text });
+    },
+  ),
+);
+
+export const discardDraft = mutation(
+  withSecret({ replyId: v.string() }, async (ctx: MutationCtx, { replyId }) => {
+    const target = await getReply(ctx, replyId);
+    // Convex stops actions after 10 minutes, so an older marker belongs to a send that died.
+    const stuck = (target.sendingAt ?? 0) < Date.now() - 15 * 60_000;
+    await ctx.db.patch(target._id, {
+      draft: undefined,
+      ...(stuck ? { sending: undefined, sendingAt: undefined } : {}),
+    });
+  }),
+);
+
+export const claimDraft = internalMutation({
+  args: { replyId: v.string(), text: v.string() },
+  handler: async (ctx, { replyId, text }) => {
+    const target = await getReply(ctx, replyId);
+    if (target.mine)
+      throw new Error("Cannot send an answer to your own reply");
+    if (target.draft === undefined || target.sending !== undefined)
+      throw new Error("No saved draft for this reply");
+    if (target.draft !== text)
+      throw new Error("Draft changed; review it again before sending");
+    await ctx.db.patch(target._id, {
+      draft: undefined,
+      sending: text,
+      sendingAt: Date.now(),
+    });
+    return target;
   },
 });
 
-export const reply = action(
+export const restoreDraft = internalMutation({
+  args: { replyId: v.string(), text: v.string() },
+  handler: async (ctx, { replyId, text }) => {
+    const target = await getReply(ctx, replyId);
+    if (target.sending === text)
+      await ctx.db.patch(target._id, {
+        draft: target.draft ?? text,
+        sending: undefined,
+        sendingAt: undefined,
+      });
+  },
+});
+
+export const recordSent = internalMutation({
+  args: { row: v.object({ ...replyFields, repliedToId: v.string() }) },
+  handler: async (ctx, { row }) => {
+    const existing = await ctx.db
+      .query("replies")
+      .withIndex("by_threadsId", (q) => q.eq("threadsId", row.threadsId))
+      .unique();
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert("replies", row);
+    const target = await ctx.db
+      .query("replies")
+      .withIndex("by_threadsId", (q) => q.eq("threadsId", row.repliedToId))
+      .unique();
+    if (target?.sending === row.text)
+      await ctx.db.patch(target._id, {
+        sending: undefined,
+        sendingAt: undefined,
+      });
+  },
+});
+
+export const sendDraft = action(
   withSecret(
     { replyId: v.string(), text: v.string() },
     async (
       ctx: ActionCtx,
       { replyId, text },
     ): Promise<{ replyId: string; permalink: string | null }> => {
-      if (!text.trim() || [...text].length > 500)
-        throw new Error("Use 1–500 characters");
-      const target = await ctx.runQuery(internal.replies.get, { replyId });
       const account = await readyAccount(ctx);
+      const target = await ctx.runMutation(internal.replies.claimDraft, {
+        replyId,
+        text,
+      });
+      let threadsId: string;
       try {
-        const threadsId = await publishContainer({
+        threadsId = await publishContainer({
           threadsUserId: account.threadsUserId,
           accessToken: account.accessToken,
           params: { media_type: "TEXT", text, reply_to_id: replyId },
         });
-        const row = {
-          threadsId,
-          postId: target.postId,
-          text,
-          username: account.username,
-          at: Date.now(),
-          repliedToId: replyId,
-          mine: true,
-          hidden: false,
-        };
-        // Record publication before the optional permalink lookup can fail.
-        await ctx.runMutation(internal.replies.upsert, { replies: [row] });
-        let permalink: string | null = null;
-        try {
-          const body = await threads(threadsId, account.accessToken, {
-            fields: "permalink",
-          });
-          const parsed = z
-            .object({ permalink: z.string().nullish() })
-            .parse(body);
-          permalink = parsed.permalink ?? null;
-          if (permalink)
-            await ctx.runMutation(internal.replies.upsert, {
-              replies: [{ ...row, permalink }],
-            });
-        } catch {
-          // Publication succeeded; the agent must not retry because a link lookup failed.
-        }
-        return { replyId: threadsId, permalink };
       } catch (error) {
+        await ctx.runMutation(internal.replies.restoreDraft, { replyId, text });
         throw new Error(
           error instanceof Error
             ? error.message.replaceAll(account.accessToken, "[redacted]")
             : "Reply publishing failed",
         );
       }
+      const row = {
+        threadsId,
+        postId: target.postId,
+        text,
+        username: account.username,
+        at: Date.now(),
+        repliedToId: replyId,
+        mine: true,
+        hidden: false,
+      };
+      // Record publication before the optional permalink lookup can fail.
+      await ctx.runMutation(internal.replies.recordSent, { row });
+      let permalink: string | null = null;
+      try {
+        const body = await threads(threadsId, account.accessToken, {
+          fields: "permalink",
+        });
+        const parsed = z
+          .object({ permalink: z.string().nullish() })
+          .parse(body);
+        permalink = parsed.permalink ?? null;
+        if (permalink)
+          await ctx.runMutation(internal.replies.upsert, {
+            replies: [{ ...row, permalink }],
+          });
+      } catch {
+        // Publication succeeded; the agent must not retry because a link lookup failed.
+      }
+      return { replyId: threadsId, permalink };
     },
   ),
 );
