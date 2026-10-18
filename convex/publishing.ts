@@ -15,7 +15,7 @@ class ThreadsError extends Error {
   }
 }
 
-async function threads(
+export async function threads(
   path: string,
   token: string,
   params: Record<string, string> = {},

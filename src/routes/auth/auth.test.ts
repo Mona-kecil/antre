@@ -67,7 +67,7 @@ test("login binds state, exchanges three Threads requests, sets a signed owner s
   expect(Object.fromEntries(authorize.searchParams)).toMatchObject({
     client_id: "app",
     redirect_uri: "https://antre.example/auth/callback",
-    scope: "threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies",
+    scope: "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies,threads_read_replies",
     response_type: "code",
     state: jar.get("threads_state"),
   });

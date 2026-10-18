@@ -34,8 +34,20 @@ const meta = z
     topic: z.string().optional(),
     angle: z.string().optional(),
     format: z.string().optional(),
+    hook: z.string().optional(),
+    notes: z.string().optional(),
   })
   .optional();
+
+const dimension = z.enum(["topic", "angle", "format"]);
+const dateRange = {
+  since: z
+    .union([z.iso.date(), z.iso.datetime({ offset: true, local: true })])
+    .optional(),
+  until: z
+    .union([z.iso.date(), z.iso.datetime({ offset: true, local: true })])
+    .optional(),
+};
 
 function result(value: unknown) {
   return {
@@ -179,6 +191,114 @@ const handler = createMcpHandler(
             source: "agent",
           }),
         );
+      },
+    );
+    server.registerTool(
+      "taxonomy",
+      {
+        description:
+          "List topic, angle, and format codes and names for tagging posts",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        const { client, secret } = convex();
+        return result(await client.query(api.library.taxonomy, { secret }));
+      },
+    );
+    server.registerTool(
+      "set_taxonomy",
+      {
+        description:
+          "Upsert taxonomy entries by dimension and code; codes are user-defined data",
+        inputSchema: z.object({
+          entries: z.array(
+            z.object({
+              dimension,
+              code: z.string().min(1),
+              name: z.string().min(1),
+              description: z.string().optional(),
+            }),
+          ),
+        }),
+      },
+      async ({ entries }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.library.setTaxonomy, { secret, entries }),
+        );
+      },
+    );
+    server.registerTool(
+      "tag_posts",
+      {
+        description:
+          "Set meta on posts in any status. Topic/angle/format are codes from taxonomy. Omitted fields stay unchanged",
+        inputSchema: z.object({
+          posts: z.array(z.object({ id, meta: meta.unwrap() })),
+        }),
+      },
+      async ({ posts }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.library.tagPosts, { secret, posts }),
+        );
+      },
+    );
+    server.registerTool(
+      "search_posts",
+      {
+        description:
+          "Search library; tags are codes from taxonomy. Dates/times without offsets use Asia/Jakarta (WIB); until dates include the whole day, until times are exclusive. Sort descending. Engagement = (likes + replies + reposts + quotes) / views; null without positive views",
+        inputSchema: z.object({
+          ...dateRange,
+          status: z
+            .enum(["draft", "queued", "publishing", "published", "failed"])
+            .optional(),
+          topic: z.string().optional(),
+          angle: z.string().optional(),
+          format: z.string().optional(),
+          text: z.string().optional(),
+          minViews: z.number().nonnegative().optional(),
+          sort: z.enum(["date", "views", "engagement"]).optional(),
+          limit: z.number().int().positive().optional(),
+          fullParts: z.boolean().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.query(api.library.searchPosts, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "insights",
+      {
+        description:
+          "Group published posts by taxonomy codes (untagged = null). Mean engagement = mean of (likes + replies + reposts + quotes) / views; best post uses engagement. minViews defaults to 1; zero views excluded. WIB date ranges match search_posts. Followers use latest snapshots at/before start and before end",
+        inputSchema: z.object({
+          ...dateRange,
+          dimensions: z.array(dimension).min(1),
+          minViews: z.number().nonnegative().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.query(api.library.insights, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "sync_now",
+      {
+        description:
+          "Import top-level Threads posts, refresh recent/missing metrics, and snapshot followers. Returns imported, metricsUpdated, and any import or insights permission error",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        const { client, secret } = convex();
+        return result(await client.action(api.sync.now, { secret }));
       },
     );
   },

@@ -9,9 +9,33 @@ export const meta = v.object({
   topic: v.optional(v.string()),
   angle: v.optional(v.string()),
   format: v.optional(v.string()),
+  hook: v.optional(v.string()),
+  notes: v.optional(v.string()),
+});
+
+export const dimension = v.union(
+  v.literal("topic"),
+  v.literal("angle"),
+  v.literal("format"),
+);
+export const metrics = v.object({
+  views: v.number(),
+  likes: v.number(),
+  replies: v.number(),
+  reposts: v.number(),
+  quotes: v.number(),
+  shares: v.number(),
+  syncedAt: v.number(),
 });
 
 export default defineSchema({
+  taxonomy: defineTable({
+    dimension,
+    code: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+  }).index("by_dimension_code", ["dimension", "code"]),
+  followers: defineTable({ at: v.number(), count: v.number() }),
   posts: defineTable({
     parts: v.array(part),
     publishedIds: v.array(v.string()),
@@ -39,7 +63,8 @@ export default defineSchema({
       }),
     ),
     meta: v.optional(meta),
-    source: v.union(v.literal("web"), v.literal("agent")),
+    source: v.union(v.literal("web"), v.literal("agent"), v.literal("threads")),
+    metrics: v.optional(metrics),
   }),
   settings: defineTable({
     timeZone: v.string(),

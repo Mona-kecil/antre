@@ -12,4 +12,9 @@ crons.weekly(
   { dayOfWeek: "monday", hourUTC: 0, minuteUTC: 0 },
   internal.publishing.refreshToken,
 );
+crons.daily(
+  "sync Threads library",
+  { hourUTC: 1, minuteUTC: 0 },
+  internal.sync.run,
+);
 export default crons;
