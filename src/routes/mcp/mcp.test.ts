@@ -83,6 +83,9 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
     "tag_posts",
     "search_posts",
     "insights",
+    "list_replies",
+    "reply",
+    "hide_reply",
     "sync_now",
   ]);
 });
@@ -169,6 +172,45 @@ test("MCP tags and searches published posts through Convex", async () => {
         permalink: "https://threads.net/live",
       },
     ]);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("account", {
+        threadsUserId: "owner",
+        username: "owner",
+        accessToken: "test-token",
+        tokenExpiresAt: Date.now() + 86_400_000,
+        needsReconnect: false,
+        repliesSyncedAt: Date.parse("2026-10-18T01:00:00Z"),
+      });
+      await ctx.db.insert("replies", {
+        threadsId: "reader-reply",
+        postId: id,
+        text: "Reader question",
+        username: "reader",
+        at: Date.parse("2026-10-18T00:30:00Z"),
+        repliedToId: "live",
+        mine: false,
+        hidden: false,
+      });
+    });
+    expect(await call("list_replies", {})).toEqual({
+      syncedAt: "2026-10-18T01:00:00.000Z",
+      replies: [
+        {
+          replyId: "reader-reply",
+          username: "reader",
+          text: "Reader question",
+          at: "2026-10-18T00:30:00.000Z",
+          permalink: null,
+          hidden: false,
+          parentText: "Creative library post",
+          postId: id,
+          postText: "Creative library post",
+        },
+      ],
+    });
+    expect(
+      await call("list_replies", { postId: id, unanswered: false, limit: 1 }),
+    ).toMatchObject({ replies: [{ replyId: "reader-reply" }] });
     expect(
       await t.query(api.library.searchPosts, {
         secret: "test-secret",

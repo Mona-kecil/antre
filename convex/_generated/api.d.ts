@@ -15,6 +15,7 @@ import type * as images from "../images.js";
 import type * as library from "../library.js";
 import type * as posts from "../posts.js";
 import type * as publishing from "../publishing.js";
+import type * as replies from "../replies.js";
 import type * as sync from "../sync.js";
 
 import type {
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   library: typeof library;
   posts: typeof posts;
   publishing: typeof publishing;
+  replies: typeof replies;
   sync: typeof sync;
 }>;
 

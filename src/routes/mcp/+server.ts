@@ -290,10 +290,67 @@ const handler = createMcpHandler(
       },
     );
     server.registerTool(
+      "list_replies",
+      {
+        description:
+          "List replies newest first with parent and root post text. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. limit defaults to 50. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
+        inputSchema: z.object({
+          unanswered: z.boolean().optional(),
+          postId: id.optional(),
+          limit: z.number().int().positive().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.query(api.replies.list, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "reply",
+      {
+        description:
+          "Publish a text reply now to a stored replyId; marks it answered without waiting for sync. Returns the new replyId and permalink if available",
+        inputSchema: z.object({
+          replyId: z.string().min(1),
+          text: z
+            .string()
+            .refine(
+              (text) => text.trim().length > 0 && [...text].length <= 500,
+              "Use 1–500 characters",
+            ),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.action(api.replies.reply, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "hide_reply",
+      {
+        description:
+          "Hide (hide=true) or unhide (hide=false) a stored reply on Threads and update its local visibility",
+        inputSchema: z.object({
+          replyId: z.string().min(1),
+          hide: z.boolean(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.action(api.replies.hide, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
       "sync_now",
       {
         description:
-          "Import top-level Threads posts, remove published posts missing from a complete sync if older than 5 minutes, refresh recent/missing metrics, and snapshot followers. Returns imported, removed, metricsUpdated, and any import or insights permission error",
+          "Import top-level Threads posts, remove published posts missing from a complete sync if older than 5 minutes, refresh recent/missing metrics, snapshot followers, and sync replies on posts from the last 7 days. Returns imported, removed, metricsUpdated, replies (rows synced), and any import, insights, or reply sync error",
         inputSchema: z.object({}),
       },
       async () => {

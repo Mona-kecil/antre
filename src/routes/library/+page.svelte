@@ -18,12 +18,26 @@
       <td>{post.engagement === null ? '—' : `${(post.engagement * 100).toFixed(2)}%`}</td>
     </tr>{/each}</tbody>
   </table></div>
+  <section aria-labelledby="taxonomy-title">
+    <h2 id="taxonomy-title">Taxonomy</h2>
+    {#each ['topic', 'angle', 'format'] as dimension}
+      {@const entries = data.taxonomy.filter((entry) => entry.dimension === dimension)}
+      <h3>{dimension[0].toUpperCase() + dimension.slice(1)}</h3>
+      {#if entries.length}
+        <div class="table"><table>
+          <thead><tr><th>Code</th><th>Name</th><th>Description</th></tr></thead>
+          <tbody>{#each entries as entry (entry._id)}<tr><td><code>{entry.code}</code></td><td>{entry.name}</td><td>{entry.description ?? '—'}</td></tr>{/each}</tbody>
+        </table></div>
+      {:else}<p>No {dimension} entries yet.</p>{/if}
+    {/each}
+  </section>
 </main>
 <style>
   :global(body) { margin: 0; color: #222; background: #f8f7f4; font: 16px/1.5 system-ui, sans-serif; }
   main { margin: 0 auto; max-width: 1500px; padding: 32px 20px; }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; }
   h1 { margin: 0; font-size: 28px; } a { color: #215f4b; } header p { color: #666; }
+  section { margin-top: 32px; }
   .table { overflow-x: auto; } table { width: 100%; border-collapse: collapse; background: white; }
   th, td { text-align: left; padding: 10px; border: 1px solid #ddd; vertical-align: top; }
   th { font-size: 14px; } time { white-space: nowrap; } .text { min-width: 250px; white-space: pre-wrap; overflow-wrap: anywhere; }

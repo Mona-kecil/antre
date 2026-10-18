@@ -5,8 +5,9 @@ import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ locals }) => {
   const { client, secret } = convex();
-  const [account, posts] = await Promise.all([
+  const [account, taxonomy, posts] = await Promise.all([
     client.query(api.account.current, { secret }),
+    client.query(api.library.taxonomy, { secret }),
     client.query(api.library.searchPosts, {
       secret,
       status: "published",
@@ -15,5 +16,5 @@ export const load: PageServerLoad = async ({ locals }) => {
   ]);
   if (!account || account.threadsUserId !== locals.userId)
     error(403, "This session does not belong to the owner");
-  return { account, posts };
+  return { account, posts, taxonomy };
 };

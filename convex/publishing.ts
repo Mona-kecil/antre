@@ -52,6 +52,57 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
+export async function publishContainer({
+  threadsUserId,
+  accessToken,
+  params,
+}: {
+  threadsUserId: string;
+  accessToken: string;
+  params: Record<string, string>;
+}): Promise<string> {
+  const container = await threads(
+    `${threadsUserId}/threads`,
+    accessToken,
+    params,
+    "POST",
+  );
+  const containerId = requiredString(
+    "id" in container ? container.id : undefined,
+    "container id",
+  );
+  const deadline = Date.now() + 30_000;
+  while (true) {
+    const result = await threads(containerId, accessToken, {
+      fields: "status,error_message",
+    });
+    const status = "status" in result ? result.status : undefined;
+    if (status === "FINISHED") break;
+    if (status === "ERROR" || status === "EXPIRED") {
+      throw new Error(
+        "error_message" in result &&
+          typeof result.error_message === "string" &&
+          result.error_message
+          ? result.error_message
+          : status,
+      );
+    }
+    if (Date.now() >= deadline)
+      throw new Error("Threads is still processing this part; retry shortly");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  const published = await threads(
+    `${threadsUserId}/threads_publish`,
+    accessToken,
+    { creation_id: containerId },
+    "POST",
+  );
+  return requiredString(
+    "id" in published ? published.id : undefined,
+    "published id",
+  );
+}
+
 export const getPost = internalQuery({
   args: { id: v.id("posts") },
   handler: async (ctx, { id }) => await ctx.db.get(id),
@@ -197,48 +248,11 @@ export const publish = internalAction({
             if (!url) throw new Error("Post image is missing from storage");
             params.image_url = url;
           }
-          const container = await threads(
-            `${account.threadsUserId}/threads`,
-            account.accessToken,
+          threadsId = await publishContainer({
+            threadsUserId: account.threadsUserId,
+            accessToken: account.accessToken,
             params,
-            "POST",
-          );
-          const containerId = requiredString(
-            "id" in container ? container.id : undefined,
-            "container id",
-          );
-          const deadline = Date.now() + 30_000;
-          while (true) {
-            const result = await threads(containerId, account.accessToken, {
-              fields: "status,error_message",
-            });
-            const status = "status" in result ? result.status : undefined;
-            if (status === "FINISHED") break;
-            if (status === "ERROR" || status === "EXPIRED") {
-              throw new Error(
-                "error_message" in result &&
-                  typeof result.error_message === "string" &&
-                  result.error_message
-                  ? result.error_message
-                  : status,
-              );
-            }
-            if (Date.now() >= deadline)
-              throw new Error(
-                "Threads is still processing this part; retry shortly",
-              );
-            await new Promise((resolve) => setTimeout(resolve, 1_000));
-          }
-          const published = await threads(
-            `${account.threadsUserId}/threads_publish`,
-            account.accessToken,
-            { creation_id: containerId },
-            "POST",
-          );
-          threadsId = requiredString(
-            "id" in published ? published.id : undefined,
-            "published id",
-          );
+          });
         }
         if (
           !(await ctx.runMutation(internal.publishing.recordId, {

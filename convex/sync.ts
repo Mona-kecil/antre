@@ -99,12 +99,15 @@ export const removeMissing = internalMutation({
   handler: async (ctx, { seenIds, cutoff }) => {
     const seen = new Set(seenIds);
     let removed = 0;
+    const replies = await ctx.db.query("replies").collect();
     for (const post of await ctx.db.query("posts").collect()) {
       if (
         post.status.kind === "published" &&
         post.status.at < cutoff &&
         !seen.has(post.publishedIds[0])
       ) {
+        for (const reply of replies)
+          if (reply.postId === post._id) await ctx.db.delete(reply._id);
         await ctx.db.delete(post._id);
         removed++;
       }
@@ -150,6 +153,7 @@ type SyncResult = {
   imported: number;
   removed: number;
   metricsUpdated: number;
+  replies: number;
   error: string | null;
 };
 export const run = internalAction({
@@ -170,6 +174,7 @@ export const run = internalAction({
         imported,
         removed,
         metricsUpdated,
+        replies: 0,
         error: "Threads account needs reconnecting",
       };
     const recordError = (context: string, error: unknown) =>
@@ -264,10 +269,13 @@ export const run = internalAction({
         error,
       );
     }
+    const replySync = await ctx.runAction(internal.replies.sync, {});
+    if (replySync.error) errors.add(replySync.error);
     return {
       imported,
       removed,
       metricsUpdated,
+      replies: replySync.replies,
       error: errors.size ? [...errors].join("; ") : null,
     };
   },

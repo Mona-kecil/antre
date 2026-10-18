@@ -17,4 +17,5 @@ crons.daily(
   { hourUTC: 1, minuteUTC: 0 },
   internal.sync.run,
 );
+crons.interval("sync Threads replies", { hours: 1 }, internal.replies.sync);
 export default crons;

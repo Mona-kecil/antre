@@ -28,7 +28,20 @@ export const metrics = v.object({
   syncedAt: v.number(),
 });
 
+export const replyFields = {
+  threadsId: v.string(),
+  postId: v.id("posts"),
+  text: v.string(),
+  username: v.string(),
+  at: v.number(),
+  permalink: v.optional(v.string()),
+  repliedToId: v.optional(v.string()),
+  mine: v.boolean(),
+  hidden: v.boolean(),
+};
+
 export default defineSchema({
+  replies: defineTable(replyFields).index("by_threadsId", ["threadsId"]),
   taxonomy: defineTable({
     dimension,
     code: v.string(),
@@ -78,5 +91,6 @@ export default defineSchema({
     accessToken: v.string(),
     tokenExpiresAt: v.number(),
     needsReconnect: v.boolean(),
+    repliesSyncedAt: v.optional(v.number()),
   }),
 });

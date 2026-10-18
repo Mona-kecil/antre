@@ -118,6 +118,8 @@ test("sync pages imports, removes missing older posts only after complete paging
           },
         });
       }
+      if (url.pathname.endsWith("/conversation") && !permissionError)
+        return Response.json({ data: [] });
       if (permissionError)
         return Response.json(
           {
@@ -158,6 +160,7 @@ test("sync pages imports, removes missing older posts only after complete paging
     imported: 2,
     removed: 1,
     metricsUpdated: 4,
+    replies: 0,
     error: null,
   });
   const posts = await t.query(api.posts.listQueue, { secret });
@@ -197,6 +200,7 @@ test("sync pages imports, removes missing older posts only after complete paging
     imported: 0,
     removed: 0,
     metricsUpdated: 3,
+    replies: 0,
     error: null,
   });
   expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(5);
