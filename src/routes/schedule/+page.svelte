@@ -29,10 +29,20 @@
 		return Date.now();
 	});
 	const week = $derived(Array.from({ length: 7 }, (_, i) => data.from + i * DAY));
+	const published = $derived(data.posts.filter((post) => post.status.kind === 'published'));
+	// From today on, published posts fold into one row so the list opens on
+	// what is still to come. Past days stay open as a record.
+	const foldable = $derived(published.length > 0 && data.day >= data.today);
+	let openDay = $state<number | null>(null);
+	const folded = $derived(foldable && openDay !== data.day);
+	const visible = $derived(
+		folded ? data.posts.filter((post) => post.status.kind !== 'published') : data.posts
+	);
+	const views = $derived(published.reduce((sum, post) => sum + (post.metrics?.views ?? 0), 0));
 	const pageNo = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
-	const lastStart = $derived(Math.floor(Math.max(0, data.posts.length - 1) / LIMIT) * LIMIT);
+	const lastStart = $derived(Math.floor(Math.max(0, visible.length - 1) / LIMIT) * LIMIT);
 	const offset = $derived(Math.min((pageNo - 1) * LIMIT, lastStart));
-	const shown = $derived(data.posts.slice(offset, offset + LIMIT));
+	const shown = $derived(visible.slice(offset, offset + LIMIT));
 	const marks = $derived(
 		data.posts.map((post) => ({
 			id: post.id,
@@ -59,16 +69,18 @@
 		return at === data.today ? '/schedule' : `/schedule?day=${isoDay(at)}`;
 	}
 
+	async function toPage(wanted: number) {
+		if (wanted === pageNo) return;
+		const url = new URL(page.url.href);
+		if (wanted === 1) url.searchParams.delete('page');
+		else url.searchParams.set('page', String(wanted));
+		await goto(url, { replace: true, reset: false });
+	}
+
 	async function select(id: string) {
 		selected = id;
-		const index = data.posts.findIndex((post) => post.id === id);
-		const wanted = Math.floor(index / LIMIT) + 1;
-		if (wanted !== pageNo) {
-			const url = new URL(page.url.href);
-			if (wanted === 1) url.searchParams.delete('page');
-			else url.searchParams.set('page', String(wanted));
-			await goto(url, { replace: true, reset: false });
-		}
+		if (folded && published.some((post) => post.id === id)) openDay = data.day;
+		await toPage(Math.floor(visible.findIndex((post) => post.id === id) / LIMIT) + 1);
 		await tick();
 		const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 		document
@@ -136,6 +148,28 @@
 	onselect={select}
 />
 
+{#if foldable}
+	<button
+		type="button"
+		class="fold"
+		aria-expanded={!folded}
+		onclick={() => {
+			openDay = folded ? data.day : null;
+			void toPage(1);
+		}}
+	>
+		<span class="fold-icon"><Icon name="check" size={18} /></span>
+		<span class="fold-text">
+			<strong class="num">{published.length} published</strong>
+			<span class="muted num">
+				{clock(published[0].at)}{published.length > 1 ? `–${clock(published[published.length - 1].at)}` : ''}{#if views}
+					· {views.toLocaleString('en')} views{/if}
+			</span>
+		</span>
+		<span class="fold-action">{folded ? 'Show' : 'Hide'}<Icon name="down" size={16} /></span>
+	</button>
+{/if}
+
 {#each shown as post (post.id)}
 	{@const kind = post.status.kind}
 	<Post parts={post.parts} {username} id="post-{post.id}" selected={post.id === selected}>
@@ -182,16 +216,22 @@
 	</Post>
 {:else}
 	<div class="empty">
-		<p><strong>Nothing on this day.</strong></p>
+		<p><strong>{published.length ? 'Nothing left on this day.' : 'Nothing on this day.'}</strong></p>
 		<p class="muted">
-			{free.length ? `${free.length} free slots. Queue drafts to fill them.` : 'No posting window falls on this day.'}
+			{free.length
+				? `${free.length} free slots. Queue drafts to fill them.`
+				: published.length
+					? data.nextSlot
+						? `Next free slot: ${when(data.nextSlot, now)}.`
+						: 'No free slots left.'
+					: 'No posting window falls on this day.'}
 		</p>
 		<a class="btn btn-secondary" href="/">Go to drafts</a>
 	</div>
 {/each}
 
-{#if data.posts.length > LIMIT}
-	<Pager total={data.posts.length} {offset} limit={LIMIT} />
+{#if visible.length > LIMIT}
+	<Pager total={visible.length} {offset} limit={LIMIT} />
 {/if}
 
 <TimeSheet
@@ -326,6 +366,59 @@
 
 	.time {
 		font-weight: 600;
+	}
+
+	.fold {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		width: 100%;
+		min-height: 52px;
+		padding: 8px 16px;
+		text-align: left;
+		border-bottom: 1px solid var(--line);
+		transition: background-color 160ms var(--ease);
+	}
+
+	.fold:hover {
+		background: var(--press);
+	}
+
+	.fold-icon {
+		display: grid;
+		place-items: center;
+		width: 36px;
+		color: var(--green);
+	}
+
+	.fold-text {
+		display: grid;
+		flex: 1;
+		font-size: 13px;
+		line-height: 18px;
+	}
+
+	.fold-text strong {
+		font-size: 15px;
+		font-weight: 600;
+		line-height: 20px;
+	}
+
+	.fold-action {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--fg-2);
+	}
+
+	.fold-action :global(svg) {
+		transition: transform 200ms var(--ease);
+	}
+
+	.fold[aria-expanded='true'] .fold-action :global(svg) {
+		transform: rotate(180deg);
 	}
 
 	.error,
