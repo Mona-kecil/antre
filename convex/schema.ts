@@ -40,6 +40,15 @@ export const replyFields = {
   hidden: v.boolean(),
 };
 
+export const postingWindow = v.object({ start: v.string(), end: v.string() });
+export const gapPolicy = v.union(v.literal("autoFill"), v.literal("keepTimes"));
+export const queueSettings = {
+  windows: v.array(postingWindow),
+  intervalMinutes: v.number(),
+  timeZone: v.literal("Asia/Jakarta"),
+  gapPolicy,
+};
+
 export default defineSchema({
   replies: defineTable({
     ...replyFields,
@@ -57,22 +66,37 @@ export default defineSchema({
   posts: defineTable({
     parts: v.array(part),
     publishedIds: v.array(v.string()),
+    pinned: v.optional(v.boolean()),
+    scheduleGeneration: v.optional(v.number()),
     status: v.union(
       v.object({ kind: v.literal("draft") }),
       v.object({
         kind: v.literal("queued"),
         at: v.number(),
         jobId: v.id("_scheduled_functions"),
+        generation: v.optional(v.number()),
+        retry: v.optional(v.boolean()),
       }),
       v.object({
         kind: v.literal("publishing"),
         at: v.number(),
         startedAt: v.number(),
+        retry: v.optional(v.boolean()),
+        attempt: v.optional(v.number()),
+        retryAt: v.optional(v.number()),
+        retryJobId: v.optional(v.id("_scheduled_functions")),
       }),
       v.object({
         kind: v.literal("published"),
         at: v.number(),
         permalink: v.string(),
+      }),
+      v.object({
+        kind: v.literal("held"),
+        at: v.number(),
+        heldAt: v.number(),
+        reason: v.string(),
+        retry: v.optional(v.boolean()),
       }),
       v.object({
         kind: v.literal("failed"),
@@ -84,18 +108,27 @@ export default defineSchema({
     source: v.union(v.literal("web"), v.literal("agent"), v.literal("threads")),
     metrics: v.optional(metrics),
   }),
-  settings: defineTable({
-    timeZone: v.string(),
-    windowStart: v.string(),
-    windowEnd: v.string(),
-    intervalMinutes: v.number(),
-  }),
+  // Deployment bridge: migrateSettings replaces legacy rows; remove the legacy
+  // branch in the next deployment after running that migration in production.
+  settings: defineTable(
+    v.union(
+      v.object(queueSettings),
+      v.object({
+        timeZone: v.string(),
+        windowStart: v.string(),
+        windowEnd: v.string(),
+        intervalMinutes: v.number(),
+      }),
+    ),
+  ),
   account: defineTable({
     threadsUserId: v.string(),
     username: v.string(),
     accessToken: v.string(),
     tokenExpiresAt: v.number(),
     needsReconnect: v.boolean(),
+    lastRefreshError: v.optional(v.string()),
+    lastRefreshErrorAt: v.optional(v.number()),
     repliesSyncedAt: v.optional(v.number()),
   }),
 });

@@ -57,8 +57,15 @@ function result(value: unknown) {
       {
         type: "text" as const,
         text: JSON.stringify(value ?? { ok: true }, (key, item) =>
-          ["at", "startedAt", "_creationTime"].includes(key) &&
-          typeof item === "number"
+          [
+            "at",
+            "startedAt",
+            "heldAt",
+            "retryAt",
+            "tokenExpiresAt",
+            "lastRefreshErrorAt",
+            "_creationTime",
+          ].includes(key) && typeof item === "number"
             ? { iso: new Date(item).toISOString(), wib: wib(item) }
             : item,
         ),
@@ -145,7 +152,7 @@ const handler = createMcpHandler(
       "list_queue",
       {
         description:
-          "List drafts and posts, with times in ISO and WIB and imageUrl on image parts to verify attachments",
+          "List posts with status, held reason, pinned state, account refresh errors, ISO/WIB times, and image previews",
         inputSchema: z.object({ days: z.number().positive().optional() }),
       },
       async ({ days }) => {
@@ -200,7 +207,8 @@ const handler = createMcpHandler(
     server.registerTool(
       "queue",
       {
-        description: "Queue at an ISO 8601 time or the next free WIB slot",
+        description:
+          "Queue at an exact ISO time (pinned) or the next free posting slot (unpinned)",
         inputSchema: z.object({
           id,
           at: z.iso.datetime({ offset: true }).optional(),
@@ -216,6 +224,80 @@ const handler = createMcpHandler(
             source: "agent",
           }),
         });
+      },
+    );
+    server.registerTool(
+      "reschedule",
+      {
+        description:
+          "Move a queued post to an exact future ISO time (pinned); omit at for the next free slot (unpinned)",
+        inputSchema: z.object({
+          id,
+          at: z.iso.datetime({ offset: true }).optional(),
+        }),
+      },
+      async ({ id, at }) => {
+        const { client, secret } = convex();
+        return result({
+          at: await client.mutation(api.posts.move, {
+            secret,
+            id,
+            source: "agent",
+            ...(at === undefined ? {} : { at: Date.parse(at) }),
+          }),
+        });
+      },
+    );
+    server.registerTool(
+      "swap",
+      {
+        description:
+          "Exchange two queued posts' future times and pinned states",
+        inputSchema: z.object({ id, otherId: id }),
+      },
+      async ({ id, otherId }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.posts.swap, {
+            secret,
+            id,
+            otherId,
+            source: "agent",
+          }),
+        );
+      },
+    );
+    server.registerTool(
+      "get_settings",
+      {
+        description:
+          "Read posting windows, interval, time zone, and gap policy",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        const { client, secret } = convex();
+        return result(await client.query(api.posts.getSettings, { secret }));
+      },
+    );
+    server.registerTool(
+      "update_settings",
+      {
+        description:
+          "Replace posting settings; windows include both endpoints. Existing queued times stay fixed",
+        inputSchema: z.object({
+          windows: z
+            .array(z.object({ start: z.string(), end: z.string() }))
+            .min(1),
+          intervalMinutes: z.number().int().min(5).max(240),
+          timeZone: z.literal("Asia/Jakarta"),
+          gapPolicy: z.enum(["autoFill", "keepTimes"]),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.posts.updateSettings, { secret, ...args }),
+        );
       },
     );
     server.registerTool(
@@ -329,7 +411,14 @@ const handler = createMcpHandler(
         inputSchema: z.object({
           ...dateRange,
           status: z
-            .enum(["draft", "queued", "publishing", "published", "failed"])
+            .enum([
+              "draft",
+              "queued",
+              "publishing",
+              "published",
+              "failed",
+              "held",
+            ])
             .optional(),
           topic: z.string().optional(),
           angle: z.string().optional(),

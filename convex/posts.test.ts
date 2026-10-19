@@ -10,8 +10,13 @@ const secret = "test-secret";
 
 async function setup() {
   const t = convexTest(schema, modules);
-  const requests: { method: string; path: string; params: URLSearchParams }[] =
-    [];
+  const requests: {
+    method: string;
+    url: string;
+    path: string;
+    params: URLSearchParams;
+    at: number;
+  }[] = [];
   const containers = new Map<
     string,
     {
@@ -27,16 +32,29 @@ async function setup() {
     timestamp: string;
   }[] = [];
   let failure:
-    | { text: string; mode: "reject" | "timeout" | "token" | "processing" }
+    | {
+        text: string;
+        mode:
+          | "reject"
+          | "timeout"
+          | "token"
+          | "processing"
+          | "server"
+          | "rate"
+          | "network";
+        remaining: number;
+      }
     | undefined;
-  let failRefresh = false;
+  let refreshError: number | "network" | undefined;
+  let verificationError: number | "network" | undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : input);
       if (
         url.origin !== "https://graph.threads.net" ||
-        !url.pathname.startsWith("/v1.0/")
+        (!url.pathname.startsWith("/v1.0/") &&
+          url.pathname !== "/refresh_access_token")
       )
         throw new Error("Unexpected Threads URL");
       const method = init?.method ?? "GET";
@@ -44,21 +62,40 @@ async function setup() {
         method === "GET"
           ? url.searchParams
           : new URLSearchParams(String(init?.body));
-      const path = url.pathname.slice("/v1.0/".length);
-      requests.push({ method, path, params });
-      expect(new Headers(init?.headers).get("Authorization")).toMatch(
-        /^Bearer /,
-      );
+      const path =
+        url.pathname === "/refresh_access_token"
+          ? "refresh_access_token"
+          : url.pathname.slice("/v1.0/".length);
+      requests.push({ method, url: url.href, path, params, at: Date.now() });
+      const authorization = new Headers(init?.headers).get("Authorization");
+      expect(authorization).toMatch(/^Bearer /);
       if (path === "refresh_access_token") {
-        if (failRefresh)
+        expect(method).toBe("GET");
+        expect(url.href).toBe(
+          `https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=${encodeURIComponent(authorization?.slice(7) ?? "")}`,
+        );
+        if (refreshError === "network") throw new Error("Connection reset");
+        if (refreshError !== undefined)
           return Response.json(
-            { error: { message: "Refresh rejected", code: 190 } },
+            { error: { message: "Refresh rejected", code: refreshError } },
             { status: 400 },
           );
         return Response.json({
           access_token: "refreshed-test-token",
           expires_in: 5_184_000,
         });
+      }
+      if (method === "GET" && path === "me") {
+        expect(params.get("fields")).toBe("id");
+        if (verificationError === "network") throw new Error("Connection reset");
+        if (verificationError !== undefined)
+          return Response.json(
+            {
+              error: { message: "Verification rejected", code: verificationError },
+            },
+            { status: 400 },
+          );
+        return Response.json({ id: "user" });
       }
       if (
         method === "GET" &&
@@ -84,13 +121,17 @@ async function setup() {
       if (method === "GET" && statusContainer) {
         expect(params.get("fields")).toBe("status,error_message");
         statusContainer.statusChecks++;
-        if (failure?.text === statusContainer.text && failure.mode === "processing")
+        if (
+          failure?.text === statusContainer.text &&
+          failure.mode === "processing"
+        )
           return Response.json({
             status: "ERROR",
             error_message: "Media processing failed",
           });
         return Response.json({
-          status: statusContainer.statusChecks === 1 ? "IN_PROGRESS" : "FINISHED",
+          status:
+            statusContainer.statusChecks === 1 ? "IN_PROGRESS" : "FINISHED",
         });
       }
       if (method === "POST" && path === "user/threads_publish") {
@@ -99,13 +140,22 @@ async function setup() {
         if (container.statusChecks < 2)
           return Response.json(
             {
-              error: { message: "The requested resource does not exist", code: 24 },
+              error: {
+                message: "The requested resource does not exist",
+                code: 24,
+              },
             },
             { status: 400 },
           );
         const mode =
           failure?.text === container.text ? failure.mode : undefined;
-        if (mode) failure = undefined;
+        if (mode && failure && --failure.remaining === 0) failure = undefined;
+        if (mode === "network") throw new Error("Connection reset");
+        if (mode === "server" || mode === "rate")
+          return Response.json(
+            { error: { message: "Try again", code: mode === "rate" ? 4 : 2 } },
+            { status: mode === "rate" ? 429 : 503 },
+          );
         if (mode === "reject" || mode === "token") {
           return Response.json(
             {
@@ -141,20 +191,41 @@ async function setup() {
       threadsUserId: "user",
       username: "owner",
       accessToken: "test-access-token",
-      tokenExpiresAt: Date.now() + 60 * 86_400_000,
+      tokenExpiresAt: Date.now() + 59 * 86_400_000,
       needsReconnect: false,
     });
   });
   return {
     t,
+    block: () =>
+      t.run(async (ctx) => {
+        const account = await ctx.db.query("account").unique();
+        if (!account) throw new Error("Missing account");
+        await ctx.db.patch(account._id, { needsReconnect: true });
+      }),
+    reconnect: () =>
+      t.mutation(api.account.connect, {
+        secret,
+        threadsUserId: "user",
+        username: "owner",
+        accessToken: "new-token",
+        tokenExpiresAt: Date.now() + 60 * 86_400_000,
+      }),
     fake: {
       requests,
       live,
-      fail(text: string, mode: NonNullable<typeof failure>["mode"]) {
-        failure = { text, mode };
+      fail(
+        text: string,
+        mode: NonNullable<typeof failure>["mode"],
+        remaining = 1,
+      ) {
+        failure = { text, mode, remaining };
       },
-      failRefresh() {
-        failRefresh = true;
+      failRefresh(code: number | "network" = 190) {
+        refreshError = code;
+      },
+      failVerification(code: number | "network") {
+        verificationError = code;
       },
     },
   };
@@ -373,25 +444,23 @@ test.each(["reject", "timeout"] as const)(
     });
     await t.mutation(api.posts.publishNow, { secret, id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
-      {
-        publishedIds: ["post-1"],
-        status: {
-          kind: "failed",
-          error:
-            mode === "timeout" ? "Publish response timed out" : "Part rejected",
+    if (mode === "reject") {
+      expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+        {
+          publishedIds: ["post-1"],
+          status: { kind: "failed", error: "Part rejected" },
         },
-      },
-    ]);
-    await expect(
-      t.mutation(api.posts.updateDraft, {
-        secret,
-        id,
-        parts: [{ text: "changed root" }],
-      }),
-    ).rejects.toThrow("Published parts");
-    await t.mutation(api.posts.retry, { secret, id });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
+      ]);
+      await expect(
+        t.mutation(api.posts.updateDraft, {
+          secret,
+          id,
+          parts: [{ text: "changed root" }],
+        }),
+      ).rejects.toThrow("Published parts");
+      await t.mutation(api.posts.retry, { secret, id });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    }
     expect(fake.live.map(({ text }) => text)).toEqual([
       "part 1",
       "part 2",
@@ -497,9 +566,10 @@ test("cancels unqueued and deleted jobs, rejects taken times, and reserves publi
   ).rejects.toThrow("already taken");
 });
 
-test("flags token error 190, sweeps a stuck publisher, and refreshes or flags the token", async () => {
+test("code 190 holds a publish, flags reconnect, and a refresh releases it", async () => {
   const { t, fake } = await setup();
   fake.fail("expired", "token");
+  fake.failVerification(190);
   const id = await t.mutation(api.posts.createDraft, {
     secret,
     source: "web",
@@ -508,47 +578,72 @@ test("flags token error 190, sweeps a stuck publisher, and refreshes or flags th
   await t.mutation(api.posts.publishNow, { secret, id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
-    { status: { kind: "failed", error: "Invalid access token" } },
+    { status: { kind: "held", reason: "Invalid access token" }, held: true },
   ]);
-  expect(
-    await t.run(async (ctx) => await ctx.db.query("account").unique()),
-  ).toMatchObject({ needsReconnect: true });
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
+    needsReconnect: true,
+  });
+  expect(fake.requests.filter(({ path }) => path === "me")).toMatchObject([
+    { url: "https://graph.threads.net/v1.0/me?fields=id" },
+  ]);
   await t.action(internal.publishing.refreshToken, {});
-  expect(
-    await t.run(async (ctx) => await ctx.db.query("account").unique()),
-  ).toMatchObject({
-    accessToken: "refreshed-test-token",
-    tokenExpiresAt: Date.now() + 5_184_000_000,
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
     needsReconnect: false,
   });
+  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    { status: { kind: "queued", retry: false } },
+  ]);
+  expect(
+    fake.requests.find(({ path }) => path === "refresh_access_token")?.url,
+  ).toBe(
+    "https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=test-access-token",
+  );
   expect(
     fake.requests
       .find(({ path }) => path === "refresh_access_token")
       ?.params.get("grant_type"),
   ).toBe("th_refresh_token");
-  const stuck = await t.mutation(api.posts.createDraft, {
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+    status: { kind: "published" },
+  });
+  expect(
+    fake.requests.filter(
+      ({ method, path }) =>
+        method === "GET" && ["user/threads", "me/replies"].includes(path),
+    ),
+  ).toEqual([]);
+  vi.setSystemTime(Date.now() + 86_400_000);
+  fake.failRefresh();
+  fake.failVerification(190);
+  await t.action(internal.publishing.refreshToken, {});
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
+    needsReconnect: true,
+    lastRefreshError: "Refresh rejected",
+    lastRefreshErrorAt: Date.now(),
+  });
+});
+
+test("a stuck publisher resumes with the same recovery checks as a retry", async () => {
+  const { t, fake } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
     secret,
     source: "web",
     parts: [{ text: "stuck" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id: stuck });
+  await t.mutation(api.posts.publishNow, { secret, id });
   vi.setSystemTime(Date.now() + 15 * 60_000 + 1);
   await t.mutation(internal.publishing.sweepStuck, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    { status: { kind: "published" } },
+  ]);
+  expect(fake.live.map(({ text }) => text)).toEqual(["stuck"]);
   expect(
-    (await t.query(api.posts.listQueue, { secret })).find(
-      ({ _id }) => _id === stuck,
-    )?.status,
-  ).toMatchObject({
-    kind: "failed",
-    error: expect.stringContaining("15 minutes"),
-  });
-  expect(fake.live).toHaveLength(0);
-  fake.failRefresh();
-  await t.action(internal.publishing.refreshToken, {});
-  expect(
-    await t.run(async (ctx) => await ctx.db.query("account").unique()),
-  ).toMatchObject({ needsReconnect: true });
+    fake.requests.some(
+      ({ method, path }) => method === "GET" && path === "user/threads",
+    ),
+  ).toBe(true);
 });
 
 test("rejects wrong or unset secrets and invalid parts, and edits only draft or failed posts", async () => {
@@ -608,4 +703,448 @@ test("rejects wrong or unset secrets and invalid parts, and edits only draft or 
   ]);
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(fake.live.map(({ text }) => text)).toEqual(["edited"]);
+});
+
+test("tokens younger than 24 hours skip refresh, then refresh at 24 hours", async () => {
+  const { t, fake } = await setup();
+  await t.run(async (ctx) => {
+    const account = await ctx.db.query("account").unique();
+    if (!account) throw new Error("Missing account");
+    await ctx.db.patch(account._id, {
+      tokenExpiresAt: Date.now() + 60 * 86_400_000,
+    });
+  });
+  const before = await t.query(internal.publishing.getAccount, {});
+  await t.action(internal.publishing.refreshToken, {});
+  vi.setSystemTime(Date.now() + 86_400_000 - 1);
+  await t.action(internal.publishing.refreshToken, {});
+  expect(fake.requests).toEqual([]);
+  expect(await t.query(internal.publishing.getAccount, {})).toEqual(before);
+  vi.setSystemTime(Date.now() + 1);
+  await t.action(internal.publishing.refreshToken, {});
+  expect(fake.requests.map(({ path }) => path)).toEqual([
+    "refresh_access_token",
+  ]);
+  expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+    accessToken: "refreshed-test-token",
+    needsReconnect: false,
+  });
+});
+
+test.each([1, 190, "network"] as const)(
+  "refresh failure %s keeps a valid token usable",
+  async (failure) => {
+    const { t, fake } = await setup();
+    fake.failRefresh(failure);
+    await t.action(internal.publishing.refreshToken, {});
+    expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+      accessToken: "test-access-token",
+      needsReconnect: false,
+      lastRefreshError:
+        failure === "network" ? "Connection reset" : "Refresh rejected",
+      lastRefreshErrorAt: Date.now(),
+    });
+    expect(fake.requests.map(({ path }) => path)).toEqual(
+      failure === 190
+        ? ["refresh_access_token", "me"]
+        : ["refresh_access_token"],
+    );
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "still works" }],
+    });
+    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fake.live.map(({ text }) => text)).toEqual(["still works"]);
+    const refresh = {
+      lastRefreshError:
+        failure === "network" ? "Connection reset" : "Refresh rejected",
+      lastRefreshErrorAt: expect.any(Number),
+    };
+    expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+      { account: refresh },
+    ]);
+    expect(
+      await t.query(api.library.page, { secret, view: "published" }),
+    ).toMatchObject({ account: refresh });
+  },
+);
+
+test.each([190, 1, "network"] as const)(
+  "refresh 190 and verification failure %s require reconnect only for verification 190",
+  async (failure) => {
+    const { t, fake } = await setup();
+    fake.failRefresh(190);
+    fake.failVerification(failure);
+    await t.action(internal.publishing.refreshToken, {});
+    expect(fake.requests.map(({ path }) => path)).toEqual([
+      "refresh_access_token",
+      "me",
+    ]);
+    expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+      accessToken: "test-access-token",
+      needsReconnect: failure === 190,
+      lastRefreshError: "Refresh rejected",
+      lastRefreshErrorAt: Date.now(),
+    });
+  },
+);
+
+test.each(["server", "rate", "network"] as const)(
+  "retries a transient %s failure after backoff then succeeds",
+  async (mode) => {
+    const { t, fake } = await setup();
+    fake.fail("recover", mode);
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "recover" }],
+    });
+    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "published" },
+    });
+    expect(fake.live.map(({ text }) => text)).toEqual(["recover"]);
+    const publishes = fake.requests.filter(
+      ({ path }) => path === "user/threads_publish",
+    );
+    expect(publishes).toHaveLength(2);
+    expect(publishes[1].at - publishes[0].at).toBeGreaterThanOrEqual(60_000);
+    expect(
+      fake.requests.some(
+        ({ method, path }) => method === "GET" && path === "user/threads",
+      ),
+    ).toBe(true);
+  },
+);
+
+test("transient retries stop after three backoffs", async () => {
+  const { t, fake } = await setup();
+  fake.fail("unavailable", "server", 10);
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "unavailable" }],
+  });
+  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+    status: { kind: "failed", error: "Try again" },
+  });
+  const publishes = fake.requests.filter(
+    ({ path }) => path === "user/threads_publish",
+  );
+  expect(publishes).toHaveLength(4);
+  for (const [index, minimum] of [60_000, 300_000, 900_000].entries()) {
+    expect(
+      publishes[index + 1].at - publishes[index].at,
+    ).toBeGreaterThanOrEqual(minimum);
+  }
+  expect(fake.live).toHaveLength(0);
+});
+
+test("refresh failures flag expired tokens and stale refresh results cannot replace a reconnect", async () => {
+  const { t, fake } = await setup();
+  await t.run(async (ctx) => {
+    const account = await ctx.db.query("account").unique();
+    if (!account) throw new Error("Missing account");
+    await ctx.db.patch(account._id, { tokenExpiresAt: Date.now() - 1 });
+  });
+  fake.failRefresh(1);
+  await t.action(internal.publishing.refreshToken, {});
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
+    needsReconnect: true,
+    lastRefreshError: "Refresh rejected",
+  });
+  await t.mutation(api.account.connect, {
+    secret,
+    threadsUserId: "user",
+    username: "owner",
+    accessToken: "new-token",
+    tokenExpiresAt: Date.now() + 86_400_000,
+  });
+  await t.mutation(internal.publishing.saveToken, {
+    expectedToken: "test-access-token",
+    error: "Old request",
+    invalid: true,
+  });
+  await t.mutation(internal.publishing.saveToken, {
+    expectedToken: "test-access-token",
+    token: { accessToken: "old-refreshed", tokenExpiresAt: Date.now() + 10 },
+  });
+  expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+    accessToken: "new-token",
+    needsReconnect: false,
+  });
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
+    lastRefreshError: null,
+    lastRefreshErrorAt: null,
+  });
+});
+
+test("moving a fresh queued post does not treat an older identical post as its own publication", async () => {
+  const { t, fake } = await setup();
+  const first = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "same text" }],
+  });
+  await t.mutation(api.posts.publishNow, { secret, id: first });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  const second = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "same text" }],
+  });
+  await t.mutation(api.posts.queue, { secret, id: second });
+  await t.mutation(api.posts.move, {
+    secret,
+    id: second,
+    at: Date.now() + 60_000,
+  });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(fake.live.map(({ text }) => text)).toEqual(["same text", "same text"]);
+  expect(
+    await t.query(internal.publishing.getPost, { id: second }),
+  ).toMatchObject({ publishedIds: ["post-2"], status: { kind: "published" } });
+});
+
+test("a legacy queued retry keeps recovery checks through a move and publish-now", async () => {
+  const { t, fake } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "ambiguous publish" }],
+  });
+  // Threads accepted the root, but the old worker lost the response.
+  fake.live.push({
+    id: "post-1",
+    text: "ambiguous publish",
+    timestamp: new Date().toISOString(),
+  });
+  await t.run((ctx) =>
+    ctx.db.patch(id, {
+      status: {
+        kind: "failed",
+        at: Date.now(),
+        error: "Publish response timed out",
+      },
+    }),
+  );
+  await t.mutation(api.posts.queue, { secret, id });
+  await t.run(async (ctx) => {
+    const post = await ctx.db.get(id);
+    if (post?.status.kind !== "queued") throw new Error("Expected queued post");
+    const { retry, ...legacyStatus } = post.status;
+    expect(retry).toBe(true);
+    await ctx.db.patch(id, { status: legacyStatus });
+  });
+  await t.mutation(api.posts.move, { secret, id, at: Date.now() + 60_000 });
+  expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+    status: { kind: "queued", retry: true },
+  });
+  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(fake.live).toHaveLength(1);
+  expect(fake.requests.some(({ method }) => method === "POST")).toBe(false);
+  expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+    publishedIds: ["post-1"],
+    status: { kind: "published" },
+  });
+});
+
+test.each(["fire", "publishNow"] as const)(
+  "a fresh post held by %s publishes its own copy after release without recovery",
+  async (entry) => {
+    const { t, fake, block, reconnect } = await setup();
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "same text" }],
+    });
+    fake.live.push({
+      id: "post-1",
+      text: "same text",
+      timestamp: new Date().toISOString(),
+    });
+    await block();
+    if (entry === "fire") await t.mutation(api.posts.queue, { secret, id });
+    else await t.mutation(api.posts.publishNow, { secret, id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "held", retry: false },
+    });
+    expect(fake.requests).toEqual([]);
+    await reconnect();
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "queued", retry: false },
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "published" },
+      publishedIds: ["post-2"],
+    });
+    expect(fake.live.map(({ text }) => text)).toEqual([
+      "same text",
+      "same text",
+    ]);
+    expect(
+      fake.requests.filter(
+        ({ method, path }) =>
+          method === "GET" &&
+          ["user/threads", "me/replies", "me"].includes(path),
+      ),
+    ).toEqual([]);
+  },
+);
+
+test.each(["fire", "publishNow"] as const)(
+  "a recovery retry held by %s keeps recovery after release",
+  async (entry) => {
+    const { t, fake, block, reconnect } = await setup();
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "lost response" }],
+    });
+    fake.live.push({
+      id: "post-1",
+      text: "lost response",
+      timestamp: new Date().toISOString(),
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(id, {
+        status: { kind: "failed", at: Date.now(), error: "Lost response" },
+      }),
+    );
+    await t.mutation(api.posts.queue, { secret, id });
+    await block();
+    if (entry === "publishNow")
+      await t.mutation(api.posts.publishNow, { secret, id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "held", retry: true },
+    });
+    expect(fake.requests).toEqual([]);
+    await reconnect();
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "queued", retry: true },
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "published" },
+      publishedIds: ["post-1"],
+    });
+    expect(fake.requests.some(({ path }) => path === "user/threads")).toBe(
+      true,
+    );
+    expect(fake.requests.some(({ method }) => method === "POST")).toBe(false);
+    expect(fake.live).toHaveLength(1);
+  },
+);
+
+test.each([undefined, false])(
+  "a held post with published IDs recovers even with retry=%s",
+  async (retry) => {
+    const { t, fake, reconnect } = await setup();
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "root" }, { text: "reply" }],
+    });
+    fake.live.push(
+      { id: "post-1", text: "root", timestamp: new Date().toISOString() },
+      {
+        id: "post-2",
+        text: "reply",
+        replied_to: { id: "post-1" },
+        timestamp: new Date().toISOString(),
+      },
+    );
+    await t.run((ctx) =>
+      ctx.db.patch(id, {
+        publishedIds: ["post-1"],
+        status: {
+          kind: "held",
+          at: Date.now(),
+          heldAt: Date.now(),
+          reason: "Auth rejected",
+          retry,
+        },
+      }),
+    );
+    await reconnect();
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "queued", retry: true },
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "published" },
+      publishedIds: ["post-1", "post-2"],
+    });
+    expect(fake.requests.some(({ path }) => path === "me/replies")).toBe(true);
+    expect(fake.requests.some(({ method }) => method === "POST")).toBe(false);
+  },
+);
+
+test.each([undefined, 1, "network"] as const)(
+  "publish 190 with verification %s schedules a retry without reconnect",
+  async (verification) => {
+    const { t, fake } = await setup();
+    fake.fail("still valid", "token");
+    if (verification !== undefined) fake.failVerification(verification);
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "still valid" }],
+    });
+    await t.mutation(api.posts.publishNow, { secret, id });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await t.finishInProgressScheduledFunctions();
+    expect(await t.query(api.account.current, { secret })).toMatchObject({
+      needsReconnect: false,
+    });
+    const post = await t.query(internal.publishing.getPost, { id });
+    expect(post).toMatchObject({
+      status: { kind: "publishing", attempt: 1, retryAt: expect.any(Number) },
+    });
+    if (post?.status.kind !== "publishing" || !post.status.retryJobId)
+      throw new Error("Expected scheduled retry");
+    const retryJobId = post.status.retryJobId;
+    expect(await t.run((ctx) => ctx.db.system.get(retryJobId))).toMatchObject({
+      state: { kind: "pending" },
+    });
+    expect(fake.requests.filter(({ path }) => path === "me")).toMatchObject([
+      { url: "https://graph.threads.net/v1.0/me?fields=id" },
+    ]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+      status: { kind: "published" },
+    });
+    expect(fake.live.map(({ text }) => text)).toEqual(["still valid"]);
+  },
+);
+
+test("unconfirmed publish 190 stops after three retries", async () => {
+  const { t, fake } = await setup();
+  fake.fail("unconfirmed", "token", 10);
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "unconfirmed" }],
+  });
+  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
+    status: { kind: "failed", error: "Invalid access token" },
+  });
+  expect(await t.query(api.account.current, { secret })).toMatchObject({
+    needsReconnect: false,
+  });
+  expect(
+    fake.requests.filter(({ path }) => path === "user/threads_publish"),
+  ).toHaveLength(4);
+  expect(fake.requests.filter(({ path }) => path === "me")).toHaveLength(4);
 });

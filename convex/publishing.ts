@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { hold, releaseHeld, startPublishing } from "./lib/scheduling";
 import {
   internalAction,
   internalMutation,
@@ -10,6 +11,8 @@ class ThreadsError extends Error {
   constructor(
     message: string,
     readonly code?: number,
+    readonly httpStatus?: number,
+    readonly transient = false,
   ) {
     super(message);
   }
@@ -21,16 +24,36 @@ export async function threads(
   params: Record<string, string> = {},
   method = "GET",
 ) {
-  const url = new URL(`https://graph.threads.net/v1.0/${path}`);
+  const apiPath = path.startsWith("/") ? path : `/v1.0/${path}`;
+  const url = new URL(`https://graph.threads.net${apiPath}`);
   if (method === "GET") url.search = new URLSearchParams(params).toString();
   const response = await fetch(url, {
     method,
     headers: { Authorization: `Bearer ${token}` },
     ...(method === "GET" ? {} : { body: new URLSearchParams(params) }),
+  }).catch((error: unknown) => {
+    throw new ThreadsError(
+      error instanceof Error ? error.message : "Threads network request failed",
+      undefined,
+      undefined,
+      true,
+    );
   });
-  const body: unknown = await response.json();
+  const body: unknown = await response.json().catch(() => {
+    throw new ThreadsError(
+      `Threads HTTP ${response.status}: invalid response`,
+      undefined,
+      response.status,
+      response.status === 429 || response.status >= 500,
+    );
+  });
   if (!body || typeof body !== "object")
-    throw new Error("Threads returned an invalid response");
+    throw new ThreadsError(
+      "Threads returned an invalid response",
+      undefined,
+      response.status,
+      response.status === 429 || response.status >= 500,
+    );
   if ("error" in body && body.error && typeof body.error === "object") {
     const error = body.error;
     throw new ThreadsError(
@@ -40,9 +63,20 @@ export async function threads(
       "code" in error && typeof error.code === "number"
         ? error.code
         : undefined,
+      response.status,
+      response.status === 429 ||
+        response.status >= 500 ||
+        ("is_transient" in error && error.is_transient === true) ||
+        ("code" in error && [4, 17, 32, 613].includes(Number(error.code))),
     );
   }
-  if (!response.ok) throw new Error(`Threads HTTP ${response.status}`);
+  if (!response.ok)
+    throw new ThreadsError(
+      `Threads HTTP ${response.status}`,
+      undefined,
+      response.status,
+      response.status === 429 || response.status >= 500,
+    );
   return body;
 }
 
@@ -88,7 +122,12 @@ export async function publishContainer({
       );
     }
     if (Date.now() >= deadline)
-      throw new Error("Threads is still processing this part; retry shortly");
+      throw new ThreadsError(
+        "Threads is still processing this part; retry shortly",
+        undefined,
+        undefined,
+        true,
+      );
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   const published = await threads(
@@ -138,34 +177,68 @@ export const complete = internalMutation({
   args: {
     id: v.id("posts"),
     startedAt: v.number(),
+    accessToken: v.optional(v.string()),
     result: v.union(
       v.object({ kind: v.literal("published"), permalink: v.string() }),
       v.object({
         kind: v.literal("failed"),
         error: v.string(),
         needsReconnect: v.boolean(),
+        retryable: v.optional(v.boolean()),
       }),
     ),
   },
-  handler: async (ctx, { id, startedAt, result }) => {
-    if (result.kind === "failed" && result.needsReconnect) {
-      const account = await ctx.db.query("account").unique();
-      if (account) await ctx.db.patch(account._id, { needsReconnect: true });
-    }
+  handler: async (ctx, { id, startedAt, result, accessToken }) => {
     const post = await ctx.db.get(id);
     if (
       !post ||
       post.status.kind !== "publishing" ||
-      post.status.startedAt !== startedAt
+      post.status.startedAt !== startedAt ||
+      post.status.retryAt !== undefined
     )
       return;
     const at = post.status.at;
-    await ctx.db.patch(id, {
-      status:
-        result.kind === "published"
-          ? { kind: "published", at, permalink: result.permalink }
-          : { kind: "failed", at, error: result.error },
-    });
+    if (result.kind === "published") {
+      await ctx.db.patch(id, {
+        status: { kind: "published", at, permalink: result.permalink },
+      });
+      return;
+    }
+    if (result.needsReconnect) {
+      const account = await ctx.db.query("account").unique();
+      if (
+        account &&
+        (accessToken === undefined || account.accessToken === accessToken)
+      )
+        await ctx.db.patch(account._id, { needsReconnect: true });
+      await hold(ctx, post, result.error);
+      // An OAuth reconnect may have completed while this request was in flight.
+      const current = await ctx.db.query("account").unique();
+      if (
+        current &&
+        !current.needsReconnect &&
+        current.tokenExpiresAt > Date.now()
+      )
+        await releaseHeld(ctx);
+      return;
+    }
+    const attempt = post.status.attempt ?? 0;
+    const delay = [60_000, 5 * 60_000, 15 * 60_000][attempt];
+    if (result.retryable && delay !== undefined) {
+      const retryAt = Date.now() + delay;
+      const retryJobId = await ctx.scheduler.runAt(
+        retryAt,
+        internal.posts.retryAutomatic,
+        { id, startedAt, attempt: attempt + 1 },
+      );
+      await ctx.db.patch(id, {
+        status: { ...post.status, attempt: attempt + 1, retryAt, retryJobId },
+      });
+    } else {
+      await ctx.db.patch(id, {
+        status: { kind: "failed", at, error: result.error },
+      });
+    }
   },
 });
 
@@ -176,7 +249,8 @@ export const publish = internalAction({
     if (
       !post ||
       post.status.kind !== "publishing" ||
-      post.status.startedAt !== startedAt
+      post.status.startedAt !== startedAt ||
+      post.status.retryAt !== undefined
     )
       return;
     const account = await ctx.runQuery(internal.publishing.getAccount, {});
@@ -186,7 +260,7 @@ export const publish = internalAction({
         account.needsReconnect ||
         account.tokenExpiresAt <= Date.now()
       ) {
-        throw new Error("Threads account needs reconnecting");
+        throw new ThreadsError("Threads account needs reconnecting", 190);
       }
       const publishedIds = [...post.publishedIds];
       for (
@@ -273,6 +347,7 @@ export const publish = internalAction({
       await ctx.runMutation(internal.publishing.complete, {
         id,
         startedAt,
+        accessToken: account?.accessToken,
         result: {
           kind: "published",
           permalink: requiredString(
@@ -284,15 +359,35 @@ export const publish = internalAction({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Threads publishing failed";
+      const tokenError = error instanceof ThreadsError && error.code === 190;
+      let needsReconnect =
+        tokenError &&
+        (!account ||
+          account.needsReconnect ||
+          account.tokenExpiresAt <= Date.now());
+      if (tokenError && account && !needsReconnect) {
+        try {
+          await threads("me", account.accessToken, { fields: "id" });
+        } catch (verificationError) {
+          needsReconnect =
+            verificationError instanceof ThreadsError &&
+            verificationError.code === 190;
+        }
+        needsReconnect ||= account.tokenExpiresAt <= Date.now();
+      }
       await ctx.runMutation(internal.publishing.complete, {
         id,
         startedAt,
+        accessToken: account?.accessToken,
         result: {
           kind: "failed",
           error: account
             ? message.replaceAll(account.accessToken, "[redacted]")
             : message,
-          needsReconnect: error instanceof ThreadsError && error.code === 190,
+          needsReconnect,
+          retryable:
+            (error instanceof ThreadsError && error.transient) ||
+            (tokenError && !needsReconnect),
         },
       });
     }
@@ -301,17 +396,34 @@ export const publish = internalAction({
 
 export const saveToken = internalMutation({
   args: {
+    expectedToken: v.string(),
     token: v.optional(
       v.object({ accessToken: v.string(), tokenExpiresAt: v.number() }),
     ),
+    error: v.optional(v.string()),
+    invalid: v.optional(v.boolean()),
   },
-  handler: async (ctx, { token }) => {
+  handler: async (ctx, { expectedToken, token, error, invalid }) => {
     const account = await ctx.db.query("account").unique();
-    if (account)
+    if (!account || account.accessToken !== expectedToken) return;
+    if (token) {
       await ctx.db.patch(account._id, {
         ...token,
-        needsReconnect: token === undefined,
+        needsReconnect: false,
+        lastRefreshError: undefined,
+        lastRefreshErrorAt: undefined,
       });
+      await releaseHeld(ctx);
+    } else {
+      await ctx.db.patch(account._id, {
+        needsReconnect:
+          account.needsReconnect ||
+          invalid === true ||
+          account.tokenExpiresAt <= Date.now(),
+        lastRefreshError: error,
+        lastRefreshErrorAt: Date.now(),
+      });
+    }
   },
 });
 
@@ -320,11 +432,13 @@ export const refreshToken = internalAction({
   handler: async (ctx): Promise<void> => {
     const account = await ctx.runQuery(internal.publishing.getAccount, {});
     if (!account) return;
+    // Long-lived tokens last 60 days and cannot refresh during their first day.
+    if (account.tokenExpiresAt - Date.now() > 59 * 86_400_000) return;
     try {
       const result = await threads(
-        "refresh_access_token",
+        "/refresh_access_token",
         account.accessToken,
-        { grant_type: "th_refresh_token" },
+        { grant_type: "th_refresh_token", access_token: account.accessToken },
       );
       const accessToken = requiredString(
         "access_token" in result ? result.access_token : undefined,
@@ -339,13 +453,31 @@ export const refreshToken = internalAction({
         throw new Error("Threads response is missing token expiry");
       }
       await ctx.runMutation(internal.publishing.saveToken, {
+        expectedToken: account.accessToken,
         token: {
           accessToken,
           tokenExpiresAt: Date.now() + result.expires_in * 1000,
         },
       });
-    } catch {
-      await ctx.runMutation(internal.publishing.saveToken, {});
+    } catch (error) {
+      let invalid = false;
+      if (error instanceof ThreadsError && error.code === 190) {
+        try {
+          await threads("me", account.accessToken, { fields: "id" });
+        } catch (verificationError) {
+          invalid =
+            verificationError instanceof ThreadsError &&
+            verificationError.code === 190;
+        }
+      }
+      await ctx.runMutation(internal.publishing.saveToken, {
+        expectedToken: account.accessToken,
+        error: (error instanceof Error
+          ? error.message
+          : "Threads refresh failed"
+        ).replaceAll(account.accessToken, "[redacted]"),
+        invalid,
+      });
     }
   },
 });
@@ -358,14 +490,19 @@ export const sweepStuck = internalMutation({
         post.status.kind === "publishing" &&
         post.status.startedAt < Date.now() - 15 * 60_000
       ) {
-        await ctx.db.patch(post._id, {
-          status: {
-            kind: "failed",
-            at: post.status.at,
-            error:
-              "Publishing timed out after 15 minutes; retry to check Threads and resume",
-          },
-        });
+        if (post.status.retryAt !== undefined) continue;
+        const attempt = post.status.attempt ?? 0;
+        if (attempt < 3) {
+          await startPublishing(ctx, post, post.status.at, true, attempt + 1);
+        } else {
+          await ctx.db.patch(post._id, {
+            status: {
+              kind: "failed",
+              at: post.status.at,
+              error: "Publishing timed out after 15 minutes; retries exhausted",
+            },
+          });
+        }
       }
     }
   },

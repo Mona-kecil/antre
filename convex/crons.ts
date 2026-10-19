@@ -3,13 +3,13 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 crons.interval(
-  "fail stuck posts",
+  "recover stuck posts",
   { minutes: 10 },
   internal.publishing.sweepStuck,
 );
-crons.weekly(
+crons.daily(
   "refresh Threads token",
-  { dayOfWeek: "monday", hourUTC: 0, minuteUTC: 0 },
+  { hourUTC: 0, minuteUTC: 0 },
   internal.publishing.refreshToken,
 );
 crons.daily(

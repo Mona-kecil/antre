@@ -12,11 +12,14 @@ import type * as account from "../account.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as images from "../images.js";
+import type * as lib_media from "../lib/media.js";
+import type * as lib_scheduling from "../lib/scheduling.js";
 import type * as library from "../library.js";
 import type * as posts from "../posts.js";
 import type * as publishing from "../publishing.js";
 import type * as replies from "../replies.js";
 import type * as sync from "../sync.js";
+import type * as testing_storage from "../testing/storage.js";
 
 import type {
   ApiFromModules,
@@ -29,11 +32,14 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   crons: typeof crons;
   images: typeof images;
+  "lib/media": typeof lib_media;
+  "lib/scheduling": typeof lib_scheduling;
   library: typeof library;
   posts: typeof posts;
   publishing: typeof publishing;
   replies: typeof replies;
   sync: typeof sync;
+  "testing/storage": typeof testing_storage;
 }>;
 
 /**

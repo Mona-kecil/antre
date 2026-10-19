@@ -31,6 +31,9 @@ test("first connect claims ownership, reconnect replaces the token, and another 
       threadsUserId: "owner",
       username: "mona",
       needsReconnect: false,
+      tokenExpiresAt: account.tokenExpiresAt,
+      lastRefreshError: null,
+      lastRefreshErrorAt: null,
     });
     await expect(
       t.mutation(api.account.connect, { ...account, threadsUserId: "other" }),

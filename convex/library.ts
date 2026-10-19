@@ -9,6 +9,7 @@ import {
 } from "./_generated/server";
 import { withSecret } from "./auth";
 import { partsWithImages } from "./lib/media";
+import { accountState } from "./lib/scheduling";
 import { dimension, meta } from "./schema";
 
 const range = { since: v.optional(v.string()), until: v.optional(v.string()) };
@@ -117,6 +118,7 @@ export const searchPosts = query(
           v.literal("publishing"),
           v.literal("published"),
           v.literal("failed"),
+          v.literal("held"),
         ),
       ),
       topic: v.optional(v.string()),
@@ -224,6 +226,7 @@ export const page = query(
             return "drafts";
           case "queued":
           case "publishing":
+          case "held":
             return "scheduled";
           case "published":
             return "published";
@@ -292,6 +295,9 @@ export const page = query(
         filtered.slice(offset, offset + limit).map(async (post) => ({
           id: post._id,
           status: post.status,
+          at: post.status.kind === "draft" ? null : post.status.at,
+          pinned: post.pinned ?? post.status.kind === "queued",
+          held: post.status.kind === "held",
           parts: await partsWithImages(ctx, post.parts),
           meta: post.meta ?? {},
           source: post.source,
@@ -300,7 +306,8 @@ export const page = query(
           _creationTime: post._creationTime,
         })),
       );
-      return { items, total: filtered.length, counts, facets };
+      const account = accountState(await ctx.db.query("account").unique());
+      return { items, total: filtered.length, counts, facets, account };
     },
   ),
 );

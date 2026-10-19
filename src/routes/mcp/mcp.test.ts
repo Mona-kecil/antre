@@ -194,6 +194,10 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
     "create_draft",
     "update_draft",
     "queue",
+    "reschedule",
+    "swap",
+    "get_settings",
+    "update_settings",
     "unqueue",
     "publish_now",
     "delete_post",
@@ -345,6 +349,89 @@ test("MCP tags and searches published posts through Convex", async () => {
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
+
+test("MCP reschedule, swap, and settings operate on the same Convex queue", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-18T22:45:00Z"));
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const secret = "test-secret";
+  const call = async (name: string, args: unknown) => {
+    const body = await invokeTool(name, args);
+    expect(body.result.isError, JSON.stringify(body)).not.toBe(true);
+    return JSON.parse(body.result.content[0].text);
+  };
+  try {
+    expect(await call("get_settings", {})).toMatchObject({
+      gapPolicy: "keepTimes",
+    });
+    const settings = {
+      windows: [
+        { start: "06:00", end: "07:00" },
+        { start: "13:00", end: "14:00" },
+      ],
+      intervalMinutes: 30,
+      timeZone: "Asia/Jakarta",
+      gapPolicy: "autoFill",
+    };
+    expect(await call("update_settings", settings)).toEqual(settings);
+    const first = await call("create_draft", { parts: [{ text: "first" }] });
+    const second = await call("create_draft", { parts: [{ text: "second" }] });
+    await call("queue", { id: first.id });
+    await call("queue", { id: second.id, at: "2026-10-19T07:00:00+07:00" });
+    expect(
+      await call("reschedule", {
+        id: first.id,
+        at: "2026-10-19T13:00:00+07:00",
+      }),
+    ).toMatchObject({ at: { iso: "2026-10-19T06:00:00.000Z" } });
+    await call("reschedule", { id: first.id });
+    await call("swap", { id: first.id, otherId: second.id });
+    const queued = await t.query(api.posts.listQueue, { secret });
+    expect(queued.find(({ _id }) => _id === first.id)).toMatchObject({
+      pinned: true,
+      at: Date.parse("2026-10-19T07:00:00+07:00"),
+    });
+    expect(queued.find(({ _id }) => _id === second.id)).toMatchObject({
+      pinned: false,
+      at: Date.parse("2026-10-19T06:00:00+07:00"),
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(second.id, {
+        status: {
+          kind: "held",
+          at: Date.now(),
+          heldAt: Date.now(),
+          reason: "Reconnect",
+        },
+      });
+    });
+    expect(await call("list_queue", {})).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _id: second.id,
+          held: true,
+          pinned: false,
+          status: expect.objectContaining({
+            kind: "held",
+            reason: "Reconnect",
+          }),
+        }),
+      ]),
+    );
+    const invalid = await invokeTool("update_settings", {
+      ...settings,
+      windows: [{ start: "13:00", end: "06:00" }],
+    });
+    expect(invalid.result.isError).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
     vi.clearAllMocks();
   }
 });

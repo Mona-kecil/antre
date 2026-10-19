@@ -10,7 +10,21 @@ import {
 } from "./_generated/server";
 import { withSecret } from "./auth";
 import { partsWithImages, validateImage } from "./lib/media";
-import { meta, part } from "./schema";
+import { meta, part, queueSettings } from "./schema";
+import {
+  accountState,
+  compactAfter,
+  hold,
+  nextSlot,
+  needsRecovery,
+  occupiedTimes,
+  place,
+  readSettings,
+  releaseHeld,
+  startPublishing,
+  validateSettings,
+  validateTime,
+} from "./lib/scheduling";
 
 const source = v.optional(v.union(v.literal("web"), v.literal("agent")));
 
@@ -27,24 +41,6 @@ async function validateParts(ctx: MutationCtx, parts: Doc<"posts">["parts"]) {
     if (!image) throw new Error("Image not found in storage");
     validateImage(image);
   }
-}
-
-async function startPublishing(
-  ctx: MutationCtx,
-  post: Doc<"posts">,
-  at: number,
-  retry: boolean,
-) {
-  const startedAt = Date.now();
-  await ctx.db.patch(post._id, {
-    status: { kind: "publishing", at, startedAt },
-    source: post.source,
-  });
-  await ctx.scheduler.runAfter(0, internal.publishing.publish, {
-    id: post._id,
-    startedAt,
-    retry,
-  });
 }
 
 export const createDraft = mutation(
@@ -114,65 +110,13 @@ export const queue = mutation(
       ) {
         throw new Error("Only drafts and failed posts can be queued");
       }
-      const occupied = new Set(
-        (await ctx.db.query("posts").collect()).flatMap(({ status }) =>
-          status.kind === "queued" ||
-          status.kind === "publishing" ||
-          status.kind === "published"
-            ? [status.at]
-            : [],
-        ),
-      );
-      const now = Date.now();
-      let at = args.at;
-      if (at === undefined) {
-        let settings = await ctx.db.query("settings").unique();
-        if (!settings) {
-          const id = await ctx.db.insert("settings", {
-            timeZone: "Asia/Jakarta",
-            windowStart: "06:00",
-            windowEnd: "12:00",
-            intervalMinutes: 30,
-          });
-          settings = await ctx.db.get(id);
-        }
-        if (!settings) throw new Error("Queue settings are missing");
-        const [startHour, startMinute] = settings.windowStart
-          .split(":")
-          .map(Number);
-        const [endHour, endMinute] = settings.windowEnd.split(":").map(Number);
-        const start = startHour * 60 + startMinute;
-        const end = endHour * 60 + endMinute;
-        const clock = new Intl.DateTimeFormat("en-GB", {
-          timeZone: settings.timeZone,
-          hour: "2-digit",
-          minute: "2-digit",
-          hourCycle: "h23",
-        });
-        at = (Math.floor(now / 60_000) + 1) * 60_000;
-        for (; ; at += 60_000) {
-          const [hour, minute] = clock.format(at).split(":").map(Number);
-          const localMinute = hour * 60 + minute;
-          if (
-            localMinute >= start &&
-            localMinute <= end &&
-            (localMinute - start) % settings.intervalMinutes === 0 &&
-            !occupied.has(at)
-          )
-            break;
-        }
-      }
-      if (!Number.isFinite(at) || at <= now)
-        throw new Error("Queue time must be in the future");
-      if (occupied.has(at)) throw new Error("Queue time is already taken");
-      const jobId = await ctx.scheduler.runAt(at, internal.posts.fire, {
-        id: args.id,
-        retry: post.status.kind === "failed" || post.publishedIds.length > 0,
-      });
-      await ctx.db.patch(args.id, {
-        status: { kind: "queued", at, jobId },
-        source: args.source ?? post.source,
-      });
+      const occupied = occupiedTimes(await ctx.db.query("posts").collect());
+      const at =
+        args.at ?? nextSlot(await readSettings(ctx), occupied, Date.now());
+      validateTime(at, occupied);
+      await place(ctx, post, at, args.at !== undefined);
+      if (args.source !== undefined)
+        await ctx.db.patch(post._id, { source: args.source });
       return at;
     },
   ),
@@ -190,6 +134,7 @@ export const unqueue = mutation(
         status: { kind: "draft" },
         source: source ?? post.source,
       });
+      await compactAfter(ctx, post.status.at);
     },
   ),
 );
@@ -206,14 +151,17 @@ export const publishNow = mutation(
       ) {
         throw new Error("Post cannot be published from this state");
       }
+      const retry = await needsRecovery(ctx, post);
       if (post.status.kind === "queued")
         await ctx.scheduler.cancel(post.status.jobId);
       await startPublishing(
         ctx,
         { ...post, source: source ?? post.source },
         Date.now(),
-        post.status.kind === "failed" || post.publishedIds.length > 0,
+        retry,
       );
+      if (post.status.kind === "queued")
+        await compactAfter(ctx, post.status.at);
     },
   ),
 );
@@ -246,6 +194,8 @@ export const deletePost = mutation(
       if (post.status.kind === "queued")
         await ctx.scheduler.cancel(post.status.jobId);
       await ctx.db.delete(id);
+      if (post.status.kind === "queued")
+        await compactAfter(ctx, post.status.at);
     },
   ),
 );
@@ -265,9 +215,14 @@ export const listQueue = query(
             (a.status.kind === "draft" ? a._creationTime : a.status.at) -
             (b.status.kind === "draft" ? b._creationTime : b.status.at),
         );
+      const account = accountState(await ctx.db.query("account").unique());
       return await Promise.all(
         posts.map(async (post) => ({
           ...post,
+          at: post.status.kind === "draft" ? null : post.status.at,
+          pinned: post.pinned ?? post.status.kind === "queued",
+          held: post.status.kind === "held",
+          account,
           parts: await partsWithImages(ctx, post.parts),
         })),
       );
@@ -276,10 +231,163 @@ export const listQueue = query(
 );
 
 export const fire = internalMutation({
-  args: { id: v.id("posts"), retry: v.boolean() },
-  handler: async (ctx, { id, retry }) => {
+  args: {
+    id: v.id("posts"),
+    retry: v.boolean(),
+    generation: v.optional(v.number()),
+  },
+  handler: async (ctx, { id, retry, generation }) => {
     const post = await ctx.db.get(id);
-    if (!post || post.status.kind !== "queued") return;
+    if (
+      !post ||
+      post.status.kind !== "queued" ||
+      post.status.generation !== generation ||
+      post.status.at > Date.now()
+    )
+      return;
+    const account = await ctx.db.query("account").unique();
+    if (
+      !account ||
+      account.needsReconnect ||
+      account.tokenExpiresAt <= Date.now()
+    ) {
+      if (account && account.tokenExpiresAt <= Date.now())
+        await ctx.db.patch(account._id, { needsReconnect: true });
+      await hold(ctx, post, "Threads account needs reconnecting");
+      return;
+    }
     await startPublishing(ctx, post, post.status.at, retry);
+  },
+});
+
+export const retryAutomatic = internalMutation({
+  args: { id: v.id("posts"), startedAt: v.number(), attempt: v.number() },
+  handler: async (ctx, { id, startedAt, attempt }) => {
+    const post = await ctx.db.get(id);
+    if (
+      !post ||
+      post.status.kind !== "publishing" ||
+      post.status.startedAt !== startedAt ||
+      post.status.attempt !== attempt ||
+      post.status.retryAt === undefined ||
+      post.status.retryAt > Date.now()
+    )
+      return;
+    await startPublishing(ctx, post, post.status.at, true, attempt);
+  },
+});
+
+export const move = mutation(
+  withSecret(
+    { id: v.id("posts"), at: v.optional(v.number()), source },
+    async (ctx: MutationCtx, { id, at: requestedAt, source }) => {
+      const post = await ctx.db.get(id);
+      if (!post || post.status.kind !== "queued")
+        throw new Error("Post is not queued");
+      const occupied = occupiedTimes(
+        (await ctx.db.query("posts").collect()).filter((p) => p._id !== id),
+      );
+      const at =
+        requestedAt ?? nextSlot(await readSettings(ctx), occupied, Date.now());
+      validateTime(at, occupied);
+      await place(ctx, post, at, requestedAt !== undefined);
+      if (source !== undefined) await ctx.db.patch(id, { source });
+      return at;
+    },
+  ),
+);
+
+export const swap = mutation(
+  withSecret(
+    { id: v.id("posts"), otherId: v.id("posts"), source },
+    async (ctx: MutationCtx, { id, otherId, source }) => {
+      if (id === otherId) throw new Error("Choose two different queued posts");
+      const first = await ctx.db.get(id);
+      const second = await ctx.db.get(otherId);
+      if (
+        !first ||
+        !second ||
+        first.status.kind !== "queued" ||
+        second.status.kind !== "queued"
+      )
+        throw new Error("Both posts must be queued");
+      validateTime(first.status.at, new Set());
+      validateTime(second.status.at, new Set());
+      await place(ctx, first, second.status.at, second.pinned ?? true);
+      await place(ctx, second, first.status.at, first.pinned ?? true);
+      if (source !== undefined) {
+        await ctx.db.patch(id, { source });
+        await ctx.db.patch(otherId, { source });
+      }
+    },
+  ),
+);
+
+export const getSettings = query(
+  withSecret({}, (ctx: QueryCtx) => readSettings(ctx)),
+);
+
+export const updateSettings = mutation(
+  withSecret(queueSettings, async (ctx: MutationCtx, args) => {
+    const value = validateSettings({
+      windows: args.windows,
+      intervalMinutes: args.intervalMinutes,
+      timeZone: args.timeZone,
+      gapPolicy: args.gapPolicy,
+    });
+    const row = await ctx.db.query("settings").unique();
+    if (row) await ctx.db.replace(row._id, value);
+    else await ctx.db.insert("settings", value);
+    return value;
+  }),
+);
+
+// Run once after deploying the bridge schema. Safe to rerun.
+export const migrateSettings = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const value = await readSettings(ctx);
+    const row = await ctx.db.query("settings").unique();
+    if (row) await ctx.db.replace(row._id, value);
+    else await ctx.db.insert("settings", value);
+    let pinned = 0;
+    let unpinned = 0;
+    let recovered = 0;
+    for (const post of await ctx.db.query("posts").collect()) {
+      if (post.status.kind === "queued" && post.pinned === undefined) {
+        const isPinned =
+          nextSlot(value, new Set(), post.status.at - 1) !== post.status.at;
+        await ctx.db.patch(post._id, { pinned: isPinned });
+        if (isPinned) pinned++;
+        else unpinned++;
+      }
+      if (
+        post.status.kind === "failed" &&
+        post.status.error === "Threads account needs reconnecting"
+      ) {
+        await ctx.db.patch(post._id, {
+          status: {
+            kind: "held",
+            at: post.status.at,
+            heldAt: Date.now(),
+            reason: post.status.error,
+          },
+        });
+        recovered++;
+      }
+    }
+    const account = await ctx.db.query("account").unique();
+    if (
+      account &&
+      !account.needsReconnect &&
+      account.tokenExpiresAt > Date.now()
+    )
+      await releaseHeld(ctx);
+    return {
+      settings: value,
+      legacyPostsPinned: pinned,
+      legacyPostsUnpinned: unpinned,
+      authFailuresRecovered: recovered,
+    };
   },
 });
