@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import Icon, { type IconName } from './Icon.svelte';
 
 	const tabs: { href: string; label: string; icon: IconName; badge?: 'drafts' | 'replies' }[] = [
@@ -10,23 +10,30 @@
 		{ href: '/library', label: 'Library', icon: 'library' }
 	];
 	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
-	const active = (href: string) =>
-		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	const pendingPath = $derived(navigating.to?.url.pathname);
+	const matches = (pathname: string | undefined, href: string) =>
+		href === '/' ? pathname === '/' : (pathname?.startsWith(href) ?? false);
 </script>
 
 <nav aria-label="Main">
 	{#each tabs as tab}
 		{@const count = tab.badge ? badges[tab.badge] : 0}
+		{@const active = matches(page.url.pathname, tab.href)}
+		{@const pending = matches(pendingPath, tab.href)}
 		<a
 			href={tab.href}
+			data-sveltekit-preload-code="eager"
 			class:compose={tab.icon === 'plus'}
-			aria-current={active(tab.href) ? 'page' : undefined}
+			class:pending
+			aria-current={active ? 'page' : undefined}
 		>
+			<span class="pending-marker" aria-hidden="true"></span>
 			<span class="icon">
-				<Icon name={tab.icon} size={tab.icon === 'plus' ? 22 : 24} stroke={active(tab.href) ? 2.25 : 1.75} />
+				<Icon name={tab.icon} size={tab.icon === 'plus' ? 22 : 24} stroke={active ? 2.25 : 1.75} />
 				{#if count}<b class="badge num">{count > 999 ? '999+' : count}</b>{/if}
 			</span>
 			<span class={tab.icon === 'plus' ? 'sr-only' : 'label'}>{tab.label}</span>
+			{#if pending}<span class="sr-only">Loading</span>{/if}
 		</a>
 	{/each}
 </nav>
@@ -49,6 +56,7 @@
 	}
 
 	a {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -67,6 +75,22 @@
 
 	a[aria-current='page'] {
 		color: var(--fg);
+	}
+
+	.pending-marker {
+		position: absolute;
+		top: 5px;
+		left: 50%;
+		width: 18px;
+		height: 3px;
+		border-radius: 2px;
+		background: var(--fg);
+		transform: translateX(-50%);
+		opacity: 0;
+	}
+
+	.pending .pending-marker {
+		opacity: 1;
 	}
 
 	.icon {

@@ -1,11 +1,12 @@
 import { fail } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
-import { owner } from "#lib/server/owner.ts";
+import { convex } from "#lib/server/convex.ts";
+import { owner, requireOwner } from "#lib/server/owner.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const { client, secret, account } = await owner(locals.userId);
+  const { client, secret } = convex();
   const [drafted, unanswered] = await Promise.all([
     client.query(api.replies.list, {
       secret,
@@ -15,6 +16,8 @@ export const load: PageServerLoad = async ({ locals }) => {
     }),
     client.query(api.replies.list, { secret, limit: 10000 }),
   ]);
+  const account = requireOwner(locals.userId, drafted.account);
+  requireOwner(locals.userId, unanswered.account);
   return {
     account,
     syncedAt: unanswered.syncedAt,

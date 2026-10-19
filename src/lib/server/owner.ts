@@ -2,12 +2,22 @@ import { error } from "@sveltejs/kit";
 import { api } from "../../../convex/_generated/api";
 import { convex } from "./convex.ts";
 
+export function requireOwner<A extends { threadsUserId: string }>(
+  userId: string,
+  account: A | null,
+): A {
+  if (!account || account.threadsUserId !== userId)
+    error(403, "This session does not belong to the owner");
+  return account;
+}
+
 /** Convex client for the signed-in owner; 403 for any other Threads account. */
 export async function owner(userId: string) {
   const { client, secret } = convex();
-  const account = await client.query(api.account.current, { secret });
-  if (!account || account.threadsUserId !== userId)
-    error(403, "This session does not belong to the owner");
+  const account = requireOwner(
+    userId,
+    await client.query(api.account.current, { secret }),
+  );
   return { client, secret, account };
 }
 

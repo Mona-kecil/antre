@@ -13,6 +13,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { withSecret } from "./auth";
+import { accountState } from "./lib/scheduling";
 import { publishContainer, threads } from "./publishing";
 import { replyFields } from "./schema";
 
@@ -230,6 +231,7 @@ export const list = query(
             a._id.localeCompare(b._id),
         );
       return {
+        account: accountState(account),
         total: filtered.length,
         syncedAt:
           account?.repliesSyncedAt === undefined

@@ -178,6 +178,14 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   );
 
   expect(await t.query(api.replies.list, { secret })).toEqual({
+    account: {
+      threadsUserId: "owner",
+      username: "owner",
+      needsReconnect: false,
+      tokenExpiresAt: now + 86_400_000,
+      lastRefreshError: null,
+      lastRefreshErrorAt: null,
+    },
     total: 0,
     syncedAt: null,
     replies: [],

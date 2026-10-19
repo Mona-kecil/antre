@@ -1,9 +1,10 @@
 import { api } from "../../convex/_generated/api";
-import { owner } from "#lib/server/owner.ts";
+import { convex } from "#lib/server/convex.ts";
+import { requireOwner } from "#lib/server/owner.ts";
 import type { LayoutServerLoad } from "./$types";
 
 export const load: LayoutServerLoad = async ({ locals }) => {
-  const { client, secret, account } = await owner(locals.userId);
+  const { client, secret } = convex();
   const [taxonomy, drafts, replies] = await Promise.all([
     client.query(api.library.taxonomy, { secret }),
     client.query(api.library.page, { secret, view: "drafts", limit: 1 }),
@@ -14,6 +15,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
       limit: 1,
     }),
   ]);
+  const account = requireOwner(locals.userId, drafts.account);
+  requireOwner(locals.userId, replies.account);
   return {
     account,
     taxonomy,
