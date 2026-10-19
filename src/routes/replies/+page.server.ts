@@ -1,16 +1,8 @@
-import { error, fail } from "@sveltejs/kit";
+import { fail } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
-import { convex } from "#lib/server/convex.ts";
+import { owner } from "#lib/server/owner.ts";
 import type { Actions, PageServerLoad } from "./$types";
-
-async function owner(userId: string) {
-  const { client, secret } = convex();
-  const account = await client.query(api.account.current, { secret });
-  if (!account || account.threadsUserId !== userId)
-    error(403, "This session does not belong to the owner");
-  return { client, secret, account };
-}
 
 export const load: PageServerLoad = async ({ locals }) => {
   const { client, secret, account } = await owner(locals.userId);

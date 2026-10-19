@@ -230,6 +230,58 @@ export const listQueue = query(
   ),
 );
 
+// One WIB day of the schedule plus post counts for a strip of days around it.
+export const schedule = query(
+  withSecret(
+    { from: v.number(), days: v.number(), day: v.number() },
+    async (ctx: QueryCtx, { from, days, day }) => {
+      if (!Number.isSafeInteger(days) || days < 1 || days > 31)
+        throw new Error("Days must be an integer between 1 and 31");
+      if (![from, day].every(Number.isSafeInteger))
+        throw new Error("From and day must be timestamps");
+      const all = await ctx.db.query("posts").collect();
+      const settings = await readSettings(ctx);
+      const counts = new Array<number>(days).fill(0);
+      for (const { status } of all) {
+        if (status.kind === "draft") continue;
+        const index = Math.floor((status.at - from) / 86_400_000);
+        if (index >= 0 && index < days) counts[index]++;
+      }
+      const posts = all
+        .filter(
+          (post) =>
+            post.status.kind !== "draft" &&
+            post.status.at >= day &&
+            post.status.at < day + 86_400_000,
+        )
+        .sort(
+          (a, b) =>
+            (a.status.kind === "draft" ? 0 : a.status.at) -
+            (b.status.kind === "draft" ? 0 : b.status.at),
+        );
+      return {
+        settings,
+        account: accountState(await ctx.db.query("account").unique()),
+        counts,
+        held: all.filter((post) => post.status.kind === "held").length,
+        nextSlot: nextSlot(settings, occupiedTimes(all), Date.now()),
+        posts: await Promise.all(
+          posts.map(async (post) => ({
+            id: post._id,
+            status: post.status,
+            at: post.status.kind === "draft" ? 0 : post.status.at,
+            pinned: post.pinned ?? post.status.kind === "queued",
+            parts: await partsWithImages(ctx, post.parts),
+            meta: post.meta ?? {},
+            source: post.source,
+            metrics: post.metrics ?? null,
+          })),
+        ),
+      };
+    },
+  ),
+);
+
 export const fire = internalMutation({
   args: {
     id: v.id("posts"),

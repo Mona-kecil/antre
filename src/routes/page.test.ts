@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { actions, load } from "./+page.server";
+import { actions as compose } from "./compose/+page.server";
 import { load as loadLibrary } from "./library/+page.server";
 import { api } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
@@ -14,7 +15,7 @@ const modules = import.meta.glob([
   "!../../convex/**/*.test.ts",
 ]);
 
-test("form actions save, edit, schedule in WIB, unqueue, and delete through the real Convex functions", async () => {
+test("compose and post actions save, tag, schedule in WIB, unqueue, and delete through the real Convex functions", async () => {
   vi.stubEnv("ANTRE_SECRET", "test-secret");
   const t = convexTest(schema, modules);
   bridge.query.mockImplementation(t.query);
@@ -27,54 +28,78 @@ test("form actions save, edit, schedule in WIB, unqueue, and delete through the 
       accessToken: "test-token",
       tokenExpiresAt: Date.now() + 100000,
     });
-    const invoke = (
-      action: keyof typeof actions,
-      fields: Record<string, string>,
-    ) =>
-      actions[action]({
+    const request = (fields: Record<string, string>) =>
+      ({
+        locals: { userId: "owner" },
         request: new Request("https://antre.example/", {
           method: "POST",
           body: new URLSearchParams(fields),
         }),
-      } as Parameters<(typeof actions)[string]>[0]);
-    await invoke("compose", {
-      parts: JSON.stringify([{ text: "first" }, { text: "second" }]),
-      mode: "draft",
-    });
+      }) as never;
+    expect(
+      await compose.compose(
+        request({
+          parts: JSON.stringify([{ text: "first" }, { text: "second" }]),
+          mode: "draft",
+          topic: "T1",
+          hook: "first",
+        }),
+      ),
+    ).toEqual({ message: "Draft saved", next: "/" });
     const posts = await t.query(api.posts.listQueue, { secret: "test-secret" });
-    expect(posts).toHaveLength(1);
+    expect(posts).toMatchObject([{ meta: { topic: "T1", hook: "first" } }]);
     const id = posts[0]._id;
-    const date = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
-    const scheduled = await invoke("compose", {
-      id,
-      parts: JSON.stringify([{ text: "edited" }]),
-      mode: "schedule",
-      at: `${date}T09:30`,
+    const drafts = await load({
+      url: new URL("https://antre.example/?topic=T1"),
+      locals: { userId: "owner" },
+    } as Parameters<typeof load>[0]);
+    expect(drafts).toMatchObject({
+      view: "drafts",
+      total: 1,
+      items: [{ id, meta: { topic: "T1" } }],
+      facets: { topic: { T1: 1 } },
     });
-    expect(scheduled).toMatchObject({ saved: true });
+    expect(
+      await compose.compose(request({ parts: JSON.stringify([{ text: " " }]), mode: "draft" })),
+    ).toMatchObject({ status: 400 });
+    const date = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+    const scheduled = await compose.compose(
+      request({
+        id,
+        parts: JSON.stringify([{ text: "edited" }]),
+        mode: "schedule",
+        at: `${date}T09:30`,
+        topic: "T2",
+      }),
+    );
+    expect(scheduled).toMatchObject({ next: `/schedule?day=${date}` });
     expect(
       (await t.query(api.posts.listQueue, { secret: "test-secret" }))[0],
     ).toMatchObject({
       parts: [{ text: "edited" }],
+      meta: { topic: "T2" },
       status: { kind: "queued", at: Date.parse(`${date}T09:30:00+07:00`) },
     });
-    const page = await load({
-      url: new URL("https://antre.example/"),
-      locals: { userId: "owner" },
-    } as Parameters<typeof load>[0]);
-    expect(page).toMatchObject({
-      account: { username: "mona" },
-      groups: [{ posts: [{ _id: id, status: { kind: "queued" } }] }],
+    expect(await actions.post(request({ id, operation: "unqueue" }))).toEqual({
+      message: "Moved back to drafts",
     });
-    await invoke("post", { id, operation: "unqueue" });
     expect(
       (await t.query(api.posts.listQueue, { secret: "test-secret" }))[0].status
         .kind,
     ).toBe("draft");
-    await invoke("post", { id, operation: "delete" });
+    expect(
+      await actions.post(request({ id, operation: "queue", at: "2000-01-01T09:00" })),
+    ).toMatchObject({ status: 400 });
+    await actions.post(request({ id, operation: "delete" }));
     expect(
       await t.query(api.posts.listQueue, { secret: "test-secret" }),
     ).toEqual([]);
+    await expect(
+      actions.post({
+        ...(request({ id, operation: "delete" }) as object),
+        locals: { userId: "someone-else" },
+      } as never),
+    ).rejects.toMatchObject({ status: 403 });
   } finally {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
@@ -124,26 +149,30 @@ test("library load checks the owner and returns only published posts newest firs
           },
         });
     });
-    const event = { locals: { userId: "owner" } } as Parameters<
-      typeof loadLibrary
-    >[0];
-    expect(await loadLibrary(event)).toMatchObject({
-      account: { username: "mona" },
-      posts: [
+    const event = (userId: string, search = "") =>
+      ({
+        url: new URL(`https://antre.example/library${search}`),
+        locals: { userId },
+      }) as Parameters<typeof loadLibrary>[0];
+    expect(await loadLibrary(event("owner"))).toMatchObject({
+      sort: "date",
+      total: 2,
+      items: [
         {
-          text: "new",
+          parts: [{ text: "new" }],
           meta: { topic: "CUSTOM" },
           metrics: { views: 100 },
           engagement: 0.1,
         },
-        { text: "old" },
+        { parts: [{ text: "old" }] },
       ],
     });
-    await expect(
-      loadLibrary({ locals: { userId: "someone-else" } } as Parameters<
-        typeof loadLibrary
-      >[0]),
-    ).rejects.toMatchObject({ status: 403 });
+    expect(
+      await loadLibrary(event("owner", "?q=old&page=1")),
+    ).toMatchObject({ total: 1, items: [{ parts: [{ text: "old" }] }] });
+    await expect(loadLibrary(event("someone-else"))).rejects.toMatchObject({
+      status: 403,
+    });
   } finally {
     vi.unstubAllEnvs();
     vi.clearAllMocks();

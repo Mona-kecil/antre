@@ -3,7 +3,16 @@ import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
 import { validateImage } from "../../../convex/lib/media";
 import { convex } from "#lib/server/convex.ts";
+import { owner } from "#lib/server/owner.ts";
 import type { RequestHandler } from "./$types";
+
+/** A one-time Convex upload URL, so the browser sends image bytes directly. */
+export const GET: RequestHandler = async ({ locals }) => {
+  const { client, secret } = await owner(locals.userId);
+  return Response.json({
+    url: await client.mutation(api.images.uploadUrl, { secret }),
+  });
+};
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
   const type = request.headers.get("content-type") ?? "";

@@ -1,0 +1,255 @@
+:root {
+	color-scheme: light dark;
+	--bg: #ffffff;
+	--bg-2: #f3f3f3;
+	--bg-sheet: #ffffff;
+	--fg: #000000;
+	--fg-2: #6b6b6b;
+	--fg-3: #a3a3a3;
+	--line: rgb(0 0 0 / 0.1);
+	--line-2: rgb(0 0 0 / 0.18);
+	--press: rgb(0 0 0 / 0.05);
+	--on-fg: #ffffff;
+	--amber: #a85d00;
+	--red: #c62828;
+	--green: #1d7a3e;
+	--indigo: #4f5bd5;
+	--amber-bg: rgb(242 153 74 / 0.14);
+	--red-bg: rgb(235 87 87 / 0.12);
+	--ease: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+	--bar: 52px;
+	--tabs: 56px;
+	--safe-b: env(safe-area-inset-bottom, 0px);
+	--font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto,
+		'Helvetica Neue', Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #101010;
+		--bg-2: #1e1e1e;
+		--bg-sheet: #181818;
+		--fg: #f3f5f7;
+		--fg-2: #9a9a9a;
+		--fg-3: #616161;
+		--line: rgb(243 245 247 / 0.12);
+		--line-2: rgb(243 245 247 / 0.22);
+		--press: rgb(243 245 247 / 0.06);
+		--on-fg: #101010;
+		--amber: #f2a646;
+		--red: #ff7070;
+		--green: #5cc58c;
+		--indigo: #8f98f2;
+		--amber-bg: rgb(242 166 70 / 0.14);
+		--red-bg: rgb(255 112 112 / 0.12);
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+	scrollbar-color: var(--line-2) transparent;
+	scrollbar-width: thin;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font: 400 15px/1.4 var(--font);
+	-webkit-font-smoothing: antialiased;
+	-webkit-tap-highlight-color: transparent;
+	caret-color: var(--fg);
+}
+
+::selection {
+	background: color-mix(in srgb, var(--indigo) 28%, transparent);
+}
+
+h1,
+h2,
+h3,
+p {
+	margin: 0;
+}
+
+a {
+	color: inherit;
+	text-underline-offset: 3px;
+	text-decoration-thickness: 1px;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+button {
+	cursor: pointer;
+	background: none;
+	border: 0;
+	padding: 0;
+}
+
+button:disabled {
+	cursor: default;
+	opacity: 0.4;
+}
+
+:focus-visible {
+	outline: 2px solid var(--fg);
+	outline-offset: 2px;
+}
+
+time,
+.num {
+	font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* Buttons: one press grammar everywhere. */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 36px;
+	padding: 0 16px;
+	border-radius: 999px;
+	font-size: 15px;
+	font-weight: 600;
+	white-space: nowrap;
+	text-decoration: none;
+	transition:
+		transform 160ms var(--ease),
+		background-color 160ms var(--ease);
+}
+
+.btn:active:not(:disabled) {
+	transform: scale(0.97);
+}
+
+.btn-primary {
+	background: var(--fg);
+	color: var(--on-fg);
+}
+
+.btn-secondary {
+	border: 1px solid var(--line-2);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background: var(--press);
+}
+
+.btn-danger {
+	background: var(--red);
+	color: #fff;
+}
+
+.btn-block {
+	width: 100%;
+	height: 44px;
+}
+
+/* Threads-style action row buttons. */
+.act {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 10px;
+	margin-left: -10px;
+	border-radius: 999px;
+	color: var(--fg);
+	font-size: 13px;
+	font-weight: 500;
+	text-decoration: none;
+	transition:
+		transform 160ms var(--ease),
+		background-color 160ms var(--ease);
+}
+
+.act + .act {
+	margin-left: 2px;
+}
+
+.act:hover:not(:disabled) {
+	background: var(--press);
+}
+
+.act:active:not(:disabled) {
+	transform: scale(0.95);
+}
+
+.icon-btn {
+	display: inline-grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 999px;
+	color: var(--fg);
+	transition:
+		transform 160ms var(--ease),
+		background-color 160ms var(--ease);
+}
+
+.icon-btn:hover:not(:disabled) {
+	background: var(--press);
+}
+
+.icon-btn:active:not(:disabled) {
+	transform: scale(0.92);
+}
+
+.field {
+	width: 100%;
+	height: 40px;
+	padding: 0 12px;
+	border: 1px solid transparent;
+	border-radius: 10px;
+	background: var(--bg-2);
+	font-size: 15px;
+}
+
+.field:focus {
+	outline: none;
+	border-color: var(--line-2);
+}
+
+.field::placeholder,
+textarea::placeholder {
+	color: var(--fg-2);
+	opacity: 1;
+}
+
+.muted {
+	color: var(--fg-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition-duration: 1ms !important;
+		animation-duration: 1ms !important;
+	}
+}

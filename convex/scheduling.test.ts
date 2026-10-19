@@ -532,3 +532,42 @@ test("the scheduler holds blocked posts without sending a Threads request", asyn
   ).toEqual(["held", "held"]);
   expect(fetch).not.toHaveBeenCalled();
 });
+
+test("schedule returns one WIB day, a day strip, held count, and the next free slot", async () => {
+  const { t, draft } = await setup();
+  const first = await draft("first");
+  const second = await draft("second");
+  const tomorrow = await draft("tomorrow");
+  await t.mutation(api.posts.queue, { secret, id: first });
+  await t.mutation(api.posts.queue, { secret, id: second });
+  await t.mutation(api.posts.queue, {
+    secret,
+    id: tomorrow,
+    at: wib("2026-10-20T07:15:00"),
+  });
+  const today = wib("2026-10-19T00:00:00");
+  const view = await t.query(api.posts.schedule, {
+    secret,
+    from: today,
+    days: 7,
+    day: today,
+  });
+  expect(view.counts).toEqual([2, 1, 0, 0, 0, 0, 0]);
+  expect(view.posts.map((post) => post.parts[0].text)).toEqual([
+    "first",
+    "second",
+  ]);
+  expect(view.posts[0]).toMatchObject({
+    at: wib("2026-10-19T06:00:00"),
+    pinned: false,
+  });
+  expect(view).toMatchObject({
+    held: 0,
+    nextSlot: wib("2026-10-19T07:00:00"),
+    settings: { intervalMinutes: 30 },
+    account: { username: "owner", needsReconnect: false },
+  });
+  await expect(
+    t.query(api.posts.schedule, { secret, from: today, days: 0, day: today }),
+  ).rejects.toThrow("Days must be");
+});
