@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as images from "../images.js";
 import type * as lib_media from "../lib/media.js";
+import type * as lib_postStore from "../lib/postStore.js";
 import type * as lib_scheduling from "../lib/scheduling.js";
 import type * as library from "../library.js";
 import type * as posts from "../posts.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   images: typeof images;
   "lib/media": typeof lib_media;
+  "lib/postStore": typeof lib_postStore;
   "lib/scheduling": typeof lib_scheduling;
   library: typeof library;
   posts: typeof posts;

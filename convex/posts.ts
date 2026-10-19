@@ -1,3 +1,12 @@
+import {
+  activePosts,
+  creationOrder,
+  postsByKind,
+  schedulingPosts,
+  patchPost,
+  insertPost,
+  deletePost as removePost,
+} from "./lib/postStore";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
@@ -52,7 +61,7 @@ export const createDraft = mutation(
     },
     async (ctx: MutationCtx, args) => {
       await validateParts(ctx, args.parts);
-      return await ctx.db.insert("posts", {
+      return await insertPost(ctx, {
         parts: args.parts,
         meta: args.meta,
         source: args.source,
@@ -90,7 +99,7 @@ export const updateDraft = mutation(
           }
         }
       }
-      await ctx.db.patch(args.id, {
+      await patchPost(ctx, args.id, {
         ...(args.parts === undefined ? {} : { parts: args.parts }),
         ...(args.source === undefined ? {} : { source: args.source }),
         ...(args.meta === undefined ? {} : { meta: args.meta }),
@@ -110,13 +119,13 @@ export const queue = mutation(
       ) {
         throw new Error("Only drafts and failed posts can be queued");
       }
-      const occupied = occupiedTimes(await ctx.db.query("posts").collect());
+      const occupied = occupiedTimes(await schedulingPosts(ctx));
       const at =
         args.at ?? nextSlot(await readSettings(ctx), occupied, Date.now());
       validateTime(at, occupied);
       await place(ctx, post, at, args.at !== undefined);
       if (args.source !== undefined)
-        await ctx.db.patch(post._id, { source: args.source });
+        await patchPost(ctx, post._id, { source: args.source });
       return at;
     },
   ),
@@ -130,7 +139,7 @@ export const unqueue = mutation(
       if (!post || post.status.kind !== "queued")
         throw new Error("Post is not queued");
       await ctx.scheduler.cancel(post.status.jobId);
-      await ctx.db.patch(id, {
+      await patchPost(ctx, id, {
         status: { kind: "draft" },
         source: source ?? post.source,
       });
@@ -193,7 +202,7 @@ export const deletePost = mutation(
         throw new Error("Cannot delete a publishing post");
       if (post.status.kind === "queued")
         await ctx.scheduler.cancel(post.status.jobId);
-      await ctx.db.delete(id);
+      await removePost(ctx, id);
       if (post.status.kind === "queued")
         await compactAfter(ctx, post.status.at);
     },
@@ -208,8 +217,16 @@ export const listQueue = query(
         throw new Error("Days must be positive");
       const until =
         days === undefined ? Infinity : Date.now() + days * 86_400_000;
-      const posts = (await ctx.db.query("posts").collect())
-        .filter(({ status }) => status.kind === "draft" || status.at <= until)
+      const posts = [
+        ...(await postsByKind(ctx, "draft").collect()),
+        ...(await ctx.db
+          .query("posts")
+          .withIndex("by_at", (q) =>
+            q.gt("status.at", undefined).lte("status.at", until),
+          )
+          .collect()),
+      ]
+        .sort(creationOrder)
         .sort(
           (a, b) =>
             (a.status.kind === "draft" ? a._creationTime : a.status.at) -
@@ -217,14 +234,20 @@ export const listQueue = query(
         );
       const account = accountState(await ctx.db.query("account").unique());
       return await Promise.all(
-        posts.map(async (post) => ({
-          ...post,
-          at: post.status.kind === "draft" ? null : post.status.at,
-          pinned: post.pinned ?? post.status.kind === "queued",
-          held: post.status.kind === "held",
-          account,
-          parts: await partsWithImages(ctx, post.parts),
-        })),
+        posts.map(
+          async ({
+            libraryIndexed: _indexed,
+            rootPublishedId: _root,
+            ...post
+          }) => ({
+            ...post,
+            at: post.status.kind === "draft" ? null : post.status.at,
+            pinned: post.pinned ?? post.status.kind === "queued",
+            held: post.status.kind === "held",
+            account,
+            parts: await partsWithImages(ctx, post.parts),
+          }),
+        ),
       );
     },
   ),
@@ -239,7 +262,30 @@ export const schedule = query(
         throw new Error("Days must be an integer between 1 and 31");
       if (![from, day].every(Number.isSafeInteger))
         throw new Error("From and day must be timestamps");
-      const all = await ctx.db.query("posts").collect();
+      const until = from + days * 86_400_000;
+      const all = await ctx.db
+        .query("posts")
+        .withIndex("by_at", (q) =>
+          q.gte("status.at", from).lt("status.at", until),
+        )
+        .collect();
+      if (day < from || day + 86_400_000 > until) {
+        const extra = await ctx.db
+          .query("posts")
+          .withIndex("by_at", (q) =>
+            q.gte("status.at", day).lt("status.at", day + 86_400_000),
+          )
+          .collect();
+        const ids = new Set(all.map((post) => post._id));
+        all.push(...extra.filter((post) => !ids.has(post._id)));
+      }
+      all.sort(creationOrder);
+      const active = await activePosts(ctx);
+      const futurePublished = await postsByKind(
+        ctx,
+        "published",
+        Date.now(),
+      ).collect();
       const settings = await readSettings(ctx);
       const counts = new Array<number>(days).fill(0);
       for (const { status } of all) {
@@ -263,8 +309,12 @@ export const schedule = query(
         settings,
         account: accountState(await ctx.db.query("account").unique()),
         counts,
-        held: all.filter((post) => post.status.kind === "held").length,
-        nextSlot: nextSlot(settings, occupiedTimes(all), Date.now()),
+        held: active.filter((post) => post.status.kind === "held").length,
+        nextSlot: nextSlot(
+          settings,
+          occupiedTimes([...active, ...futurePublished]),
+          Date.now(),
+        ),
         posts: await Promise.all(
           posts.map(async (post) => ({
             id: post._id,
@@ -337,13 +387,13 @@ export const move = mutation(
       if (!post || post.status.kind !== "queued")
         throw new Error("Post is not queued");
       const occupied = occupiedTimes(
-        (await ctx.db.query("posts").collect()).filter((p) => p._id !== id),
+        (await schedulingPosts(ctx)).filter((p) => p._id !== id),
       );
       const at =
         requestedAt ?? nextSlot(await readSettings(ctx), occupied, Date.now());
       validateTime(at, occupied);
       await place(ctx, post, at, requestedAt !== undefined);
-      if (source !== undefined) await ctx.db.patch(id, { source });
+      if (source !== undefined) await patchPost(ctx, id, { source });
       return at;
     },
   ),
@@ -368,8 +418,8 @@ export const swap = mutation(
       await place(ctx, first, second.status.at, second.pinned ?? true);
       await place(ctx, second, first.status.at, first.pinned ?? true);
       if (source !== undefined) {
-        await ctx.db.patch(id, { source });
-        await ctx.db.patch(otherId, { source });
+        await patchPost(ctx, id, { source });
+        await patchPost(ctx, otherId, { source });
       }
     },
   ),
@@ -405,11 +455,14 @@ export const migrateSettings = internalMutation({
     let pinned = 0;
     let unpinned = 0;
     let recovered = 0;
-    for (const post of await ctx.db.query("posts").collect()) {
+    for (const post of [
+      ...(await postsByKind(ctx, "queued").collect()),
+      ...(await postsByKind(ctx, "failed").collect()),
+    ]) {
       if (post.status.kind === "queued" && post.pinned === undefined) {
         const isPinned =
           nextSlot(value, new Set(), post.status.at - 1) !== post.status.at;
-        await ctx.db.patch(post._id, { pinned: isPinned });
+        await patchPost(ctx, post._id, { pinned: isPinned });
         if (isPinned) pinned++;
         else unpinned++;
       }
@@ -417,7 +470,7 @@ export const migrateSettings = internalMutation({
         post.status.kind === "failed" &&
         post.status.error === "Threads account needs reconnecting"
       ) {
-        await ctx.db.patch(post._id, {
+        await patchPost(ctx, post._id, {
           status: {
             kind: "held",
             at: post.status.at,

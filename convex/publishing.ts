@@ -1,3 +1,4 @@
+import { patchPost, postsByKind } from "./lib/postStore";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { hold, releaseHeld, startPublishing } from "./lib/scheduling";
@@ -168,7 +169,9 @@ export const recordId = internalMutation({
       post.publishedIds.length !== index
     )
       return false;
-    await ctx.db.patch(id, { publishedIds: [...post.publishedIds, threadsId] });
+    await patchPost(ctx, id, {
+      publishedIds: [...post.publishedIds, threadsId],
+    });
     return true;
   },
 });
@@ -199,7 +202,7 @@ export const complete = internalMutation({
       return;
     const at = post.status.at;
     if (result.kind === "published") {
-      await ctx.db.patch(id, {
+      await patchPost(ctx, id, {
         status: { kind: "published", at, permalink: result.permalink },
       });
       return;
@@ -231,11 +234,11 @@ export const complete = internalMutation({
         internal.posts.retryAutomatic,
         { id, startedAt, attempt: attempt + 1 },
       );
-      await ctx.db.patch(id, {
+      await patchPost(ctx, id, {
         status: { ...post.status, attempt: attempt + 1, retryAt, retryJobId },
       });
     } else {
-      await ctx.db.patch(id, {
+      await patchPost(ctx, id, {
         status: { kind: "failed", at, error: result.error },
       });
     }
@@ -485,7 +488,7 @@ export const refreshToken = internalAction({
 export const sweepStuck = internalMutation({
   args: {},
   handler: async (ctx) => {
-    for (const post of await ctx.db.query("posts").collect()) {
+    for (const post of await postsByKind(ctx, "publishing").collect()) {
       if (
         post.status.kind === "publishing" &&
         post.status.startedAt < Date.now() - 15 * 60_000
@@ -495,7 +498,7 @@ export const sweepStuck = internalMutation({
         if (attempt < 3) {
           await startPublishing(ctx, post, post.status.at, true, attempt + 1);
         } else {
-          await ctx.db.patch(post._id, {
+          await patchPost(ctx, post._id, {
             status: {
               kind: "failed",
               at: post.status.at,

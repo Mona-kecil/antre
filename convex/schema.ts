@@ -55,7 +55,9 @@ export default defineSchema({
     draft: v.optional(v.string()),
     sending: v.optional(v.string()),
     sendingAt: v.optional(v.number()),
-  }).index("by_threadsId", ["threadsId"]),
+  })
+    .index("by_threadsId", ["threadsId"])
+    .index("by_postId", ["postId"]),
   taxonomy: defineTable({
     dimension,
     code: v.string(),
@@ -64,6 +66,8 @@ export default defineSchema({
   }).index("by_dimension_code", ["dimension", "code"]),
   followers: defineTable({ at: v.number(), count: v.number() }),
   posts: defineTable({
+    libraryIndexed: v.optional(v.literal(true)),
+    rootPublishedId: v.optional(v.string()),
     parts: v.array(part),
     publishedIds: v.array(v.string()),
     pinned: v.optional(v.boolean()),
@@ -107,6 +111,22 @@ export default defineSchema({
     meta: v.optional(meta),
     source: v.union(v.literal("web"), v.literal("agent"), v.literal("threads")),
     metrics: v.optional(metrics),
+  })
+    .index("by_kind_metrics", ["status.kind", "metrics.syncedAt"])
+    .index("by_kind_at", ["status.kind", "status.at"])
+    .index("by_at", ["status.at"])
+    .index("by_libraryIndexed", ["libraryIndexed"])
+    .index("by_rootPublishedId", ["rootPublishedId"]),
+  postStats: defineTable({
+    counts: v.object({
+      drafts: v.number(),
+      scheduled: v.number(),
+      published: v.number(),
+      failed: v.number(),
+    }),
+    publishedFacets: v.array(
+      v.object({ dimension, code: v.string(), count: v.number() }),
+    ),
   }),
   // Deployment bridge: migrateSettings replaces legacy rows; remove the legacy
   // branch in the next deployment after running that migration in production.

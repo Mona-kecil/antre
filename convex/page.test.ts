@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { patchPost } from "./lib/postStore";
 import { storeTestImage } from "./testing/storage";
 
 const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
@@ -60,7 +61,7 @@ test("post pages filter text and taxonomy, count facets before their own filter,
       await t.mutation(api.posts.queue, { secret, id, at: Date.now() + at });
     else
       await t.run((ctx) =>
-        ctx.db.patch(id, {
+        patchPost(ctx, id, {
           status: { kind, at: Date.now() + at, startedAt: Date.now() },
         }),
       );

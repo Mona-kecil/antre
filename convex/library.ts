@@ -1,7 +1,19 @@
+import {
+  creationOrder,
+  dimensions,
+  kinds,
+  libraryStats,
+  postsByKind,
+  patchPost,
+  unindexedPosts,
+  viewOf,
+  viewForKind,
+} from "./lib/postStore";
 import { v } from "convex/values";
 import { z } from "zod";
 import type { Doc } from "./_generated/dataModel";
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -100,7 +112,7 @@ export const tagPosts = mutation(
       for (const { id, meta } of posts) {
         const post = await ctx.db.get(id);
         if (!post) throw new Error("Post not found");
-        await ctx.db.patch(id, { meta: { ...post.meta, ...meta } });
+        await patchPost(ctx, id, { meta: { ...post.meta, ...meta } });
       }
       return { updated: posts.length };
     },
@@ -143,7 +155,20 @@ export const searchPosts = query(
       )
         throw new Error("MinViews must be nonnegative");
       const textQuery = args.text?.toLowerCase();
-      const posts = (await ctx.db.query("posts").collect()).filter(
+      const candidates = args.status
+        ? await postsByKind(ctx, args.status, since, until).collect()
+        : Number.isFinite(since) || Number.isFinite(until)
+          ? (
+              await Promise.all(
+                kinds.map((kind) =>
+                  postsByKind(ctx, kind, since, until).collect(),
+                ),
+              )
+            ).flat()
+          : await ctx.db.query("posts").collect();
+      // Filtering/sorting used to start in creation order; retain stable score ties.
+      candidates.sort(creationOrder);
+      const posts = candidates.filter(
         (post) =>
           (!args.status || post.status.kind === args.status) &&
           date(post) >= since &&
@@ -218,23 +243,49 @@ export const page = query(
           "Views and engagement sorting require the published view",
         );
 
-      const posts = await ctx.db.query("posts").collect();
-      const counts = { drafts: 0, scheduled: 0, published: 0, failed: 0 };
-      const viewOf = (post: Doc<"posts">) => {
-        switch (post.status.kind) {
-          case "draft":
-            return "drafts";
-          case "queued":
-          case "publishing":
-          case "held":
-            return "scheduled";
-          case "published":
-            return "published";
-          case "failed":
-            return "failed";
+      const stats = await libraryStats(ctx);
+      const counts = stats.counts;
+      // Only the default published page reads a bounded slice. Text search,
+      // tag filters and views/engagement sorts read every post in the view to
+      // keep totals and facet counts exact, so their cost grows with that view.
+      const defaultPublished =
+        args.view === "published" &&
+        (args.sort === undefined || args.sort === "date") &&
+        (args.text === undefined || args.text === "") &&
+        dimensions.every((d) => args[d] === undefined);
+      let posts: Doc<"posts">[];
+      if (defaultPublished) {
+        // Read complete date/creation-time tie groups so the final id tie-break
+        // matches the in-memory comparator, including at the page boundary.
+        const selected = await postsByKind(ctx, "published")
+          .order("desc")
+          .take(offset + limit);
+        const last = selected.at(-1);
+        if (last?.status.kind === "published") {
+          const lastAt = last.status.at;
+          const tied = await ctx.db
+            .query("posts")
+            .withIndex("by_kind_at", (q) =>
+              q
+                .eq("status.kind", "published")
+                .eq("status.at", lastAt)
+                .eq("_creationTime", last._creationTime),
+            )
+            .collect();
+          const ids = new Set(selected.map((post) => post._id));
+          selected.push(...tied.filter((post) => !ids.has(post._id)));
         }
-      };
-      for (const post of posts) counts[viewOf(post)]++;
+        posts = selected;
+      } else {
+        const viewKinds = kinds.filter(
+          (kind) => viewForKind(kind) === args.view,
+        );
+        posts = (
+          await Promise.all(
+            viewKinds.map((kind) => postsByKind(ctx, kind).collect()),
+          )
+        ).flat();
+      }
       const text = args.text?.toLowerCase();
       const inView = posts.filter(
         (post) =>
@@ -246,7 +297,6 @@ export const page = query(
               post.meta?.notes ?? "",
             ].some((value) => value.toLowerCase().includes(text))),
       );
-      const dimensions = ["topic", "angle", "format"] as const;
       const matches = (
         post: Doc<"posts">,
         ignore?: (typeof dimensions)[number],
@@ -265,16 +315,27 @@ export const page = query(
         angle: {},
         format: {},
       };
-      for (const dimension of dimensions) {
-        const counts = new Map<string, number>();
-        for (const post of inView) {
-          const code = post.meta?.[dimension];
-          if (code !== undefined && matches(post, dimension))
-            counts.set(code, (counts.get(code) ?? 0) + 1);
+      if (defaultPublished) {
+        for (const dimension of dimensions) {
+          facets[dimension] = Object.fromEntries(
+            stats.publishedFacets
+              .filter((f) => f.dimension === dimension)
+              .sort((a, b) => a.code.localeCompare(b.code))
+              .map((f) => [f.code, f.count]),
+          );
         }
-        facets[dimension] = Object.fromEntries(
-          [...counts].sort(([a], [b]) => a.localeCompare(b)),
-        );
+      } else {
+        for (const dimension of dimensions) {
+          const counts = new Map<string, number>();
+          for (const post of inView) {
+            const code = post.meta?.[dimension];
+            if (code !== undefined && matches(post, dimension))
+              counts.set(code, (counts.get(code) ?? 0) + 1);
+          }
+          facets[dimension] = Object.fromEntries(
+            [...counts].sort(([a], [b]) => a.localeCompare(b)),
+          );
+        }
       }
       const filtered = inView.filter((post) => matches(post));
       const score = (post: Doc<"posts">) =>
@@ -307,7 +368,13 @@ export const page = query(
         })),
       );
       const account = accountState(await ctx.db.query("account").unique());
-      return { items, total: filtered.length, counts, facets, account };
+      return {
+        items,
+        total: defaultPublished ? counts.published : filtered.length,
+        counts,
+        facets,
+        account,
+      };
     },
   ),
 );
@@ -338,7 +405,9 @@ export const insights = query(
           posts: Doc<"posts">[];
         }
       >();
-      for (const post of await ctx.db.query("posts").collect()) {
+      for (const post of (
+        await postsByKind(ctx, "published", since, until).collect()
+      ).sort(creationOrder)) {
         if (
           post.status.kind !== "published" ||
           date(post) < since ||
@@ -395,3 +464,18 @@ export const insights = query(
     },
   ),
 );
+
+// Run after deployment until done=true. Each call commits at most 100 legacy rows.
+// Live writers claim their row in the same transaction, so retries cannot double count.
+export const backfillPostStats = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const result = await unindexedPosts(ctx).paginate({
+      numItems: 100,
+      cursor: null,
+      maximumBytesRead: 1_000_000,
+    });
+    for (const post of result.page) await patchPost(ctx, post._id, {});
+    return { indexed: result.page.length, done: result.isDone };
+  },
+});

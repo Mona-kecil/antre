@@ -1,3 +1,4 @@
+import { patchPost, schedulingPosts } from "./postStore";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -138,7 +139,7 @@ export async function place(
     retry,
     generation,
   });
-  await ctx.db.patch(post._id, {
+  await patchPost(ctx, post._id, {
     status: { kind: "queued", at, jobId, generation, retry },
     pinned,
     scheduleGeneration: generation,
@@ -156,7 +157,7 @@ export async function startPublishing(
     Date.now(),
     post.status.kind === "publishing" ? post.status.startedAt + 1 : 0,
   );
-  await ctx.db.patch(post._id, {
+  await patchPost(ctx, post._id, {
     status: { kind: "publishing", at, startedAt, retry, attempt },
     source: post.source,
   });
@@ -176,7 +177,7 @@ const byTime = (a: Doc<"posts">, b: Doc<"posts">) =>
 export async function compactAfter(ctx: MutationCtx, removedAt: number) {
   const settings = await readSettings(ctx);
   if (settings.gapPolicy !== "autoFill") return;
-  const posts = await ctx.db.query("posts").collect();
+  const posts = await schedulingPosts(ctx);
   const movable = posts
     .filter(
       (post) =>
@@ -218,7 +219,7 @@ export async function hold(
   if (post.status.kind === "publishing" && post.status.retryJobId)
     await ctx.scheduler.cancel(post.status.retryJobId);
   const at = post.status.at;
-  await ctx.db.patch(post._id, {
+  await patchPost(ctx, post._id, {
     status: {
       kind: "held",
       at,
@@ -232,7 +233,7 @@ export async function hold(
 
 export async function releaseHeld(ctx: MutationCtx) {
   const settings = await readSettings(ctx);
-  const posts = await ctx.db.query("posts").collect();
+  const posts = await schedulingPosts(ctx);
   const held = posts.filter((post) => post.status.kind === "held").sort(byTime);
   if (!held.length) return;
   const later =

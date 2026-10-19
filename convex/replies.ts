@@ -1,3 +1,5 @@
+import { creationOrder, postsByKind } from "./lib/postStore";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { z } from "zod";
 import { internal } from "./_generated/api";
@@ -76,12 +78,14 @@ export const upsert = internalMutation({
 export const targets = internalQuery({
   args: {},
   handler: async (ctx) =>
-    (await ctx.db.query("posts").collect()).filter(
-      (post) =>
-        post.status.kind === "published" &&
-        post.status.at >= Date.now() - 7 * 86_400_000 &&
-        post.publishedIds[0],
-    ),
+    (await postsByKind(ctx, "published", Date.now() - 7 * 86_400_000).collect())
+      .sort(creationOrder)
+      .filter(
+        (post) =>
+          post.status.kind === "published" &&
+          post.status.at >= Date.now() - 7 * 86_400_000 &&
+          post.publishedIds[0],
+      ),
 });
 
 export const markSynced = internalMutation({
@@ -209,9 +213,12 @@ export const list = query(
       const answered = new Set(
         replies.filter((reply) => reply.mine).map((reply) => reply.repliedToId),
       );
-      const posts = new Map(
-        (await ctx.db.query("posts").collect()).map((post) => [post._id, post]),
-      );
+      const posts = new Map<Id<"posts">, Doc<"posts">>();
+      for (const id of new Set(replies.map((reply) => reply.postId))) {
+        if (args.postId && id !== args.postId) continue;
+        const post = await ctx.db.get(id);
+        if (post) posts.set(id, post);
+      }
       const account = await ctx.db.query("account").unique();
       const filtered = replies
         .filter(
@@ -310,8 +317,7 @@ export const claimDraft = internalMutation({
   args: { replyId: v.string(), text: v.string() },
   handler: async (ctx, { replyId, text }) => {
     const target = await getReply(ctx, replyId);
-    if (target.mine)
-      throw new Error("Cannot send an answer to your own reply");
+    if (target.mine) throw new Error("Cannot send an answer to your own reply");
     if (target.draft === undefined || target.sending !== undefined)
       throw new Error("No saved draft for this reply");
     if (target.draft !== text)

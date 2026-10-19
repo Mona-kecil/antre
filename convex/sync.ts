@@ -1,4 +1,13 @@
+import {
+  creationOrder,
+  postsByKind,
+  unindexedPosts,
+  patchPost,
+  insertPost,
+  deletePost as removePost,
+} from "./lib/postStore";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { z } from "zod";
 import { internal } from "./_generated/api";
 import {
@@ -68,8 +77,9 @@ export const importPage = internalMutation({
     ),
   },
   handler: async (ctx, { posts }) => {
-    const existing = await ctx.db.query("posts").collect();
-    const known = new Set(existing.map((post) => post.publishedIds[0]));
+    const existing = await postsByKind(ctx, "publishing").collect();
+    const legacy = await unindexedPosts(ctx).collect();
+    const known = new Set(legacy.map((post) => post.publishedIds[0]));
     // Defer recent posts until publishing has recorded their Threads ids.
     const importBefore = existing.reduce(
       (before, post) =>
@@ -81,7 +91,16 @@ export const importPage = internalMutation({
     let imported = 0;
     for (const post of posts) {
       if (known.has(post.id) || post.at >= importBefore) continue;
-      await ctx.db.insert("posts", {
+      if (
+        await ctx.db
+          .query("posts")
+          .withIndex("by_rootPublishedId", (q) =>
+            q.eq("rootPublishedId", post.id),
+          )
+          .first()
+      )
+        continue;
+      await insertPost(ctx, {
         parts: [{ text: post.text }],
         publishedIds: [post.id],
         source: "threads",
@@ -94,23 +113,63 @@ export const importPage = internalMutation({
   },
 });
 
+export type RemovalPage = {
+  page: { id: Id<"posts">; publishedId: string | null }[];
+  isDone: boolean;
+  continueCursor: string;
+};
+
+export const removalCandidates = internalQuery({
+  args: { cutoff: v.number(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cutoff, cursor }): Promise<RemovalPage> => {
+    const result = await postsByKind(
+      ctx,
+      "published",
+      -Infinity,
+      cutoff,
+    ).paginate({
+      cursor,
+      numItems: 100,
+      maximumBytesRead: 1_000_000,
+    });
+    return {
+      ...result,
+      page: result.page.map((post) => ({
+        id: post._id,
+        publishedId: post.publishedIds[0] ?? null,
+      })),
+    };
+  },
+});
+
 export const removeMissing = internalMutation({
-  args: { seenIds: v.array(v.string()), cutoff: v.number() },
-  handler: async (ctx, { seenIds, cutoff }) => {
-    const seen = new Set(seenIds);
+  args: {
+    posts: v.array(
+      v.object({
+        id: v.id("posts"),
+        publishedId: v.union(v.string(), v.null()),
+      }),
+    ),
+    cutoff: v.number(),
+  },
+  handler: async (ctx, { posts, cutoff }) => {
     let removed = 0;
-    const replies = await ctx.db.query("replies").collect();
-    for (const post of await ctx.db.query("posts").collect()) {
+    for (const candidate of posts) {
+      const post = await ctx.db.get(candidate.id);
       if (
-        post.status.kind === "published" &&
-        post.status.at < cutoff &&
-        !seen.has(post.publishedIds[0])
-      ) {
-        for (const reply of replies)
-          if (reply.postId === post._id) await ctx.db.delete(reply._id);
-        await ctx.db.delete(post._id);
-        removed++;
-      }
+        !post ||
+        post.status.kind !== "published" ||
+        post.status.at >= cutoff ||
+        (post.publishedIds[0] ?? null) !== candidate.publishedId
+      )
+        continue;
+      const replies = await ctx.db
+        .query("replies")
+        .withIndex("by_postId", (q) => q.eq("postId", post._id))
+        .collect();
+      for (const reply of replies) await ctx.db.delete(reply._id);
+      await removePost(ctx, post._id);
+      removed++;
     }
     return removed;
   },
@@ -118,20 +177,32 @@ export const removeMissing = internalMutation({
 
 export const metricTargets = internalQuery({
   args: {},
-  handler: async (ctx) =>
-    (await ctx.db.query("posts").collect()).filter(
-      (post) =>
-        post.status.kind === "published" &&
-        post.publishedIds[0] &&
-        (!post.metrics || post.status.at >= Date.now() - 30 * 86_400_000),
-    ),
+  handler: async (ctx) => {
+    const recent = await postsByKind(
+      ctx,
+      "published",
+      Date.now() - 30 * 86_400_000,
+    ).collect();
+    const missing = await ctx.db
+      .query("posts")
+      .withIndex("by_kind_metrics", (q) =>
+        q.eq("status.kind", "published").eq("metrics.syncedAt", undefined),
+      )
+      .collect();
+    const posts = new Map(
+      [...recent, ...missing].map((post) => [post._id, post]),
+    );
+    return [...posts.values()]
+      .sort(creationOrder)
+      .filter((post) => post.publishedIds[0]);
+  },
 });
 
 export const saveMetrics = internalMutation({
   args: { id: v.id("posts"), metrics },
   handler: async (ctx, { id, metrics }) => {
     if (!(await ctx.db.get(id))) return false;
-    await ctx.db.patch(id, { metrics });
+    await patchPost(ctx, id, { metrics });
     return true;
   },
 });
@@ -216,10 +287,29 @@ export const run = internalAction({
           throw new Error("Threads repeated a pagination cursor");
         if (after) seen.add(after);
       } while (after);
-      removed = await ctx.runMutation(internal.sync.removeMissing, {
-        seenIds: [...seenIds],
-        cutoff: startedAt - 5 * 60_000,
-      });
+      // Keep the remote seen set in the action, rather than sending a history-sized
+      // array to one mutation. Local history is read and deleted in bounded pages.
+      const cutoff = startedAt - 5 * 60_000;
+      let cursor: string | null = null;
+      while (true) {
+        const candidates: RemovalPage = await ctx.runQuery(
+          internal.sync.removalCandidates,
+          {
+            cutoff,
+            cursor,
+          },
+        );
+        const missing = candidates.page.filter(
+          (post) => post.publishedId === null || !seenIds.has(post.publishedId),
+        );
+        if (missing.length)
+          removed += await ctx.runMutation(internal.sync.removeMissing, {
+            posts: missing,
+            cutoff,
+          });
+        if (candidates.isDone) break;
+        cursor = candidates.continueCursor;
+      }
     } catch (error) {
       recordError("Post import", error);
     }
