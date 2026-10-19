@@ -44,6 +44,8 @@ npm run build
 npx convex dev --once
 ```
 
+`npx convex dev` targets the dev deployment named by `CONVEX_DEPLOYMENT` in `.env.local`, which holds no posts. The app reads the production deployment through `CONVEX_URL`. Pushing to `main` deploys the app on Vercel; deploy Convex functions to production separately with `npx convex deploy`, and run production functions with `npx convex run --prod`.
+
 Seven Convex flow tests use `convex-test`, the edge runtime, fake timers, and a global `fetch` fake. They cover WIB slot rollover and scheduled publishing, reply chains and images, rejected and ambiguous publishes, cancellation and occupied times, token errors and refresh, stale publishers, secret checks, and invalid drafts. Crons are invoked by their registered target because `convex-test` does not execute cron schedules.
 
 Live Threads publishing remains untested. Requests follow [Meta's Threads Postman collection](https://www.postman.com/meta/threads/collection/dht3nzz/threads-api), including the [account replies feed](https://www.postman.com/meta/threads/request/2oj5hld/get-a-list-of-all-a-user-s-replies). Confirm permissions for reading replies, image-container readiness, token refresh responses, rate limits, and feed visibility after a timeout in the PRD's live-account spike.
