@@ -301,6 +301,14 @@ test("MCP tags and searches published posts through Convex", async () => {
       });
     });
     expect(await call("list_replies", {})).toEqual({
+      account: {
+        threadsUserId: "owner",
+        username: "owner",
+        needsReconnect: false,
+        tokenExpiresAt: { iso: expect.any(String), wib: expect.any(String) },
+        lastRefreshError: null,
+        lastRefreshErrorAt: null,
+      },
       total: 1,
       syncedAt: "2026-10-18T01:00:00.000Z",
       replies: [

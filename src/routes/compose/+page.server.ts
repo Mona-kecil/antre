@@ -2,7 +2,8 @@ import { error, fail } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { owner, reason } from "#lib/server/owner.ts";
+import { convex } from "#lib/server/convex.ts";
+import { owner, reason, requireOwner } from "#lib/server/owner.ts";
 import { dayStart, isoDay, parseLocal, when } from "#lib/time.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
@@ -22,13 +23,14 @@ const partsSchema = z
 const metaKeys = ["topic", "angle", "format", "hook", "notes"] as const;
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { client, secret } = await owner(locals.userId);
+  const { client, secret } = convex();
   const editId = url.searchParams.get("edit");
   const today = dayStart(Date.now());
   const [posts, schedule] = await Promise.all([
     editId ? client.query(api.posts.listQueue, { secret }) : [],
     client.query(api.posts.schedule, { secret, from: today, days: 1, day: today }),
   ]);
+  requireOwner(locals.userId, schedule.account);
   const post = posts.find(
     (post) =>
       post._id === editId &&
@@ -36,6 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   );
   if (editId && !post)
     error(404, "This draft is gone or already scheduled. Edit it from Drafts.");
+  if (post) requireOwner(locals.userId, post.account);
   return {
     edit: post
       ? {
