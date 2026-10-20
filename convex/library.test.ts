@@ -439,3 +439,121 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
     }),
   ).toMatchObject([{ id: ids[1] }]);
 });
+
+test("own thread continuations do not inflate audience replies, engagement rankings, or insights after sync", async () => {
+  const t = convexTest(schema, modules);
+  const cases = [
+    { root: "thread", parts: 3, rawReplies: 2, replies: 0, likes: 0, age: 600_000 },
+    { root: "single", parts: 1, rawReplies: 0, replies: 0, likes: 2, age: 660_000 },
+    { root: "audience", parts: 3, rawReplies: 3, replies: 1, likes: 0, age: 720_000 },
+    { root: "stale", parts: 3, rawReplies: 1, replies: 0, likes: 0, age: 31 * 86_400_000 },
+  ];
+  const ids = await t.run(async (ctx) => {
+    await ctx.db.insert("account", {
+      threadsUserId: "owner",
+      username: "owner",
+      accessToken: "test-token",
+      tokenExpiresAt: now + 86_400_000,
+      needsReconnect: false,
+    });
+    return await Promise.all(cases.map((fixture) => ctx.db.insert("posts", {
+      parts: Array.from({ length: fixture.parts }, (_, i) => ({
+        text: `${fixture.root} part ${i + 1}`,
+      })),
+      publishedIds: Array.from({ length: fixture.parts }, (_, i) =>
+        i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}`,
+      ),
+      source: "agent",
+      meta: { topic: "TOPIC" },
+      status: {
+        kind: "published",
+        at: now - fixture.age,
+        permalink: `https://threads.net/${fixture.root}`,
+      },
+      ...(fixture.root === "stale" ? { metrics: {
+        views: 100, likes: 0, replies: 1, reposts: 0, quotes: 0, shares: 0,
+        syncedAt: now - fixture.age + 60_000,
+      } } : {}),
+    })));
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: URL) => {
+    const url = new URL(input);
+    if (url.pathname === "/v1.0/me/threads")
+      return Response.json({ data: cases.map(({ root, age }) => ({
+        id: root,
+        text: `${root} part 1`,
+        timestamp: new Date(now - age).toISOString(),
+        permalink: `https://threads.net/${root}`,
+      })) });
+    if (url.pathname === "/v1.0/owner/threads_insights")
+      return Response.json({ data: [{ name: "followers_count", total_value: { value: 1 } }] });
+    const fixture = cases.find(({ root }) => url.pathname.startsWith(`/v1.0/${root}/`));
+    if (!fixture || fixture.root === "stale")
+      throw new Error(`Unexpected remote request ${url.pathname}`);
+    if (url.pathname.endsWith("/conversation"))
+      return Response.json({ data: [
+        ...Array.from({ length: fixture.parts - 1 }, (_, i) => ({
+          id: `${fixture.root}-part-${i + 2}`,
+          text: `${fixture.root} part ${i + 2}`,
+          username: "owner",
+          timestamp: new Date(now - fixture.age).toISOString(),
+          replied_to: { id: i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}` },
+        })),
+        ...(fixture.replies ? [{
+          id: `${fixture.root}-reader`,
+          text: "Audience reply",
+          username: "reader",
+          timestamp: new Date(now - 300_000).toISOString(),
+          replied_to: { id: fixture.root },
+        }] : []),
+      ] });
+    if (!url.pathname.endsWith("/insights"))
+      throw new Error(`Unexpected remote request ${url.pathname}`);
+    return Response.json({ data: [
+      { name: "views", values: [{ value: 100 }] },
+      { name: "likes", values: [{ value: fixture.likes }] },
+      { name: "replies", values: [{ value: fixture.rawReplies }] },
+      { name: "reposts", values: [{ value: 0 }] },
+      { name: "quotes", values: [{ value: 0 }] },
+      { name: "shares", values: [{ value: 0 }] },
+    ] });
+  }));
+  for (let run = 0; run < 2; run++) {
+    expect(await t.action(api.sync.now, { secret })).toEqual({
+      imported: 0, removed: 0, metricsUpdated: 3, replies: 5, error: null,
+    });
+    const page = await t.query(api.library.page, { secret, view: "published" });
+    const ranked = await t.query(api.library.page, {
+      secret, view: "published", sort: "engagement",
+    });
+    const search = await t.query(api.library.searchPosts, { secret, sort: "engagement" });
+    const full = await t.query(api.posts.getPosts, { secret, ids });
+    const insights = await t.query(api.library.insights, { secret, dimensions: ["topic"] });
+    expect((await t.query(api.replies.list, { secret })).replies).toMatchObject([
+      { username: "reader", text: "Audience reply" },
+    ]);
+    const order = [ids[1], ids[2], ids[0], ids[3]];
+    expect.soft(ranked.items.map(({ id }) => id)).toEqual(order);
+    expect.soft(search.map(({ id }) => id)).toEqual(order);
+    expect.soft(insights.groups).toEqual([{
+      tags: { topic: "TOPIC" }, count: 4, totalViews: 400, averageViews: 100,
+      averageEngagement: 0.0075, bestPostId: ids[1],
+    }]);
+    const stored = await t.run((ctx) => ctx.db.query("posts").collect());
+    for (const [i, fixture] of cases.entries()) {
+      for (const result of [page.items, ranked.items, search, full.posts]) {
+        const post = result.find((post) => post?.id === ids[i]);
+        expect.soft(post?.metrics?.replies, `${fixture.root} replies`).toBe(fixture.replies);
+        if (post && "engagement" in post)
+          expect.soft(post.engagement, `${fixture.root} engagement`).toBe(
+            (fixture.likes + fixture.replies) / 100,
+          );
+      }
+      expect(stored.find((post) => post._id === ids[i])?.metrics).toEqual({
+        views: 100, likes: fixture.likes, replies: fixture.rawReplies,
+        reposts: 0, quotes: 0, shares: 0,
+        syncedAt: fixture.root === "stale" ? now - fixture.age + 60_000 : now,
+      });
+    }
+  }
+});

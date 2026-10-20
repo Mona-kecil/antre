@@ -15,6 +15,19 @@ export const kinds = [
 ] as const;
 export type Kind = Doc<"posts">["status"]["kind"];
 
+export function audienceMetrics(
+  post: Pick<Doc<"posts">, "metrics" | "publishedIds">,
+) {
+  if (!post.metrics) return null;
+  return {
+    ...post.metrics,
+    replies: Math.max(
+      0,
+      post.metrics.replies - Math.max(0, post.publishedIds.length - 1),
+    ),
+  };
+}
+
 export function viewOf(post: Pick<Doc<"posts">, "status">) {
   return viewForKind(post.status.kind);
 }

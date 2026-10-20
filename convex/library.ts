@@ -1,4 +1,5 @@
 import {
+  audienceMetrics,
   creationOrder,
   dimensions,
   kinds,
@@ -58,7 +59,7 @@ function date(post: Doc<"posts">) {
 }
 
 function engagement(post: Doc<"posts">) {
-  const m = post.metrics;
+  const m = audienceMetrics(post);
   return m && m.views > 0
     ? (m.likes + m.replies + m.reposts + m.quotes) / m.views
     : null;
@@ -202,7 +203,7 @@ export const searchPosts = query(
               ? { parts: await partsWithImages(ctx, post.parts) }
               : {}),
             meta: post.meta ?? {},
-            metrics: post.metrics ?? null,
+            metrics: audienceMetrics(post),
             engagement: engagement(post),
             permalink:
               post.status.kind === "published" ? post.status.permalink : null,
@@ -362,7 +363,7 @@ export const page = query(
           parts: await partsWithImages(ctx, post.parts),
           meta: post.meta ?? {},
           source: post.source,
-          metrics: post.metrics ?? null,
+          metrics: audienceMetrics(post),
           engagement: engagement(post),
           _creationTime: post._creationTime,
         })),
