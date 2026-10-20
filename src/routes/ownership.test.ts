@@ -140,7 +140,7 @@ test.each(reads)("$name loads from fresh query accounts without a preliminary ac
 });
 
 test.each(["owner", null, "someone-else"])(
-  "Compose edit checks queue account %s with a matching schedule account",
+  "Compose edit rejects a missing or foreign lookup account %s with a matching schedule account",
   async (userId) => {
     const queue = await database(userId);
     const schedule = await database();
@@ -148,7 +148,7 @@ test.each(["owner", null, "someone-else"])(
     const post = posts.find((post) => post.status.kind === "draft");
     if (!post) throw new Error("Expected a draft");
     bridge.query.mockImplementation((query, args) =>
-      getFunctionName(query) === "posts:listQueue"
+      getFunctionName(query) === "posts:getPosts"
         ? queue.query(query, args)
         : schedule.query(query, args),
     );
@@ -165,7 +165,7 @@ test.each(["owner", null, "someone-else"])(
       nextSlot: expect.any(Number),
     });
     expect(bridge.query.mock.calls.map(([query]) => getFunctionName(query))).toEqual([
-      "posts:listQueue",
+      "posts:getPosts",
       "posts:schedule",
     ]);
   },

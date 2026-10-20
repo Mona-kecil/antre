@@ -1,4 +1,5 @@
 import { convexTest } from "convex-test";
+import type { Doc } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
 import { storeTestImage } from "../../../convex/testing/storage";
@@ -140,7 +141,7 @@ test("MCP uploads base64 to Convex storage, attaches the image, and rejects inva
   }
 });
 
-test("MCP rejects missing or wrong bearer tokens, then initializes and lists library and queue tools", async () => {
+test("MCP rejects missing or wrong bearer tokens, then initializes and lists annotated board, schedule and lookup tools", async () => {
   const call = (method: string, token?: string) =>
     POST({
       request: new Request("https://antre.example/mcp", {
@@ -190,7 +191,9 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
   expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
     "upload_image",
     "image_upload_url",
-    "list_queue",
+    "schedule",
+    "list_posts",
+    "get_posts",
     "create_draft",
     "update_draft",
     "queue",
@@ -213,6 +216,44 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
     "hide_reply",
     "sync_now",
   ]);
+  for (const tool of body.result.tools) {
+    expect(tool.annotations, tool.name).toBeDefined();
+    if (
+      [
+        "schedule",
+        "list_posts",
+        "get_posts",
+        "get_settings",
+        "taxonomy",
+        "search_posts",
+        "insights",
+        "list_replies",
+      ].includes(tool.name)
+    )
+      expect(tool.annotations.readOnlyHint, tool.name).toBe(true);
+    if (
+      [
+        "update_settings",
+        "publish_now",
+        "delete_post",
+        "discard_reply_draft",
+        "send_reply",
+        "hide_reply",
+        "sync_now",
+      ].includes(tool.name)
+    )
+      expect(tool.annotations.destructiveHint, tool.name).toBe(true);
+    if (
+      [
+        "upload_image",
+        "publish_now",
+        "send_reply",
+        "hide_reply",
+        "sync_now",
+      ].includes(tool.name)
+    )
+      expect(tool.annotations.openWorldHint, tool.name).toBe(true);
+  }
   const send = body.result.tools.find(
     (tool: { name: string }) => tool.name === "send_reply",
   );
@@ -221,10 +262,6 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists lib
   expect(send.inputSchema.properties.text.description).toBe(
     "the exact draft text the human saw and approved; must match the stored draft",
   );
-  expect(send.annotations).toMatchObject({
-    destructiveHint: true,
-    openWorldHint: true,
-  });
   expect(send.description).toContain("explicitly told you to send it");
 });
 
@@ -419,7 +456,7 @@ test("MCP reschedule, swap, and settings operate on the same Convex queue", asyn
         },
       });
     });
-    expect(await call("list_queue", {})).toEqual(
+    expect(await call("get_posts", { ids: [second.id] })).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           _id: second.id,
@@ -440,6 +477,298 @@ test("MCP reschedule, swap, and settings operate on the same Convex queue", asyn
   } finally {
     vi.unstubAllEnvs();
     vi.useRealTimers();
+    vi.clearAllMocks();
+  }
+});
+
+test("MCP schedule excludes past and occupied slots, keeps held and failed slots free, and bounds history reads across WIB days", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  vi.spyOn(Date, "now").mockReturnValue(
+    Date.parse("2026-10-19T06:15:00+07:00"),
+  );
+  const t = convexTest({
+    schema,
+    modules,
+    transactionLimits: { documentsRead: 40 },
+  });
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const secret = "test-secret";
+  const at = (time: string) => Date.parse(`2026-10-19T${time}:00+07:00`);
+  const call = async (args: unknown) => {
+    const body = await invokeTool("schedule", args);
+    expect(body.result.isError, JSON.stringify(body)).not.toBe(true);
+    return JSON.parse(body.result.content[0].text);
+  };
+  try {
+    await t.mutation(api.posts.updateSettings, {
+      secret,
+      windows: [
+        { start: "06:00", end: "08:00" },
+        { start: "13:00", end: "13:30" },
+      ],
+      intervalMinutes: 30,
+      timeZone: "Asia/Jakarta",
+      gapPolicy: "keepTimes",
+    });
+    const imageId = await t.run((ctx) =>
+      storeTestImage(ctx, new Blob(["png"], { type: "image/png" })),
+    );
+    const queued = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "agent",
+      parts: [{ text: "Queued", imageId }, { text: "Full second part" }],
+      meta: { topic: "T1" },
+    });
+    await t.mutation(api.posts.queue, { secret, id: queued, at: at("06:30") });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("account", {
+        threadsUserId: "owner",
+        username: "owner",
+        accessToken: "never-return-this-token",
+        tokenExpiresAt: Date.now() + 86_400_000,
+        needsReconnect: true,
+      });
+      // Either an unbounded draft or history read exceeds the query's budget.
+      for (let i = 0; i < 60; i++) {
+        await ctx.db.insert("posts", {
+          source: "web",
+          parts: [{ text: "Unrelated draft" }],
+          publishedIds: [],
+          status: { kind: "draft" },
+        });
+        await ctx.db.insert("posts", {
+          source: "threads",
+          parts: [{ text: "Old history" }],
+          publishedIds: [],
+          status: {
+            kind: "published",
+            at: 1000 + i,
+            permalink: "https://threads.net/old",
+          },
+        });
+      }
+      for (const status of [
+        { kind: "failed", at: at("13:00"), error: "Failed" },
+        {
+          kind: "held",
+          at: at("08:00"),
+          heldAt: Date.now(),
+          reason: "Reconnect",
+        },
+        {
+          kind: "published",
+          at: at("07:30"),
+          permalink: "https://threads.net/live",
+        },
+        { kind: "publishing", at: at("07:00"), startedAt: Date.now() },
+        {
+          kind: "published",
+          at: at("06:00") + 86_400_000,
+          permalink: "https://threads.net/tomorrow",
+        },
+      ] satisfies Doc<"posts">["status"][]) {
+        await ctx.db.insert("posts", {
+          source: "web",
+          parts: [{ text: status.kind }],
+          publishedIds: [],
+          status,
+        });
+      }
+    });
+    const plan = await call({ day: "2026-10-19" });
+    expect(Object.keys(plan)).toEqual([
+      "settings",
+      "account",
+      "held",
+      "nextSlot",
+      "days",
+    ]);
+    expect(plan).toMatchObject({
+      held: 1,
+      nextSlot: at("08:00"),
+      settings: { intervalMinutes: 30 },
+      account: { threadsUserId: "owner", needsReconnect: true },
+      days: [
+        {
+          day: "2026-10-19",
+          posts: [
+            {
+              id: queued,
+              status: { kind: "queued" },
+              pinned: true,
+              meta: { topic: "T1" },
+              parts: [
+                { imageId, imageUrl: expect.stringMatching(/^https?:\/\//) },
+                { text: "Full second part" },
+              ],
+            },
+            { status: { kind: "publishing" } },
+            { status: { kind: "published" } },
+            { status: { kind: "held" } },
+            { status: { kind: "failed" } },
+          ],
+          freeSlots: [at("08:00"), at("13:00"), at("13:30")],
+        },
+      ],
+    });
+    expect(JSON.stringify(plan)).not.toContain("accessToken");
+    expect(JSON.stringify(plan)).not.toContain("never-return-this-token");
+    expect(await call({})).toEqual(plan);
+    const range = await call({ day: "2026-10-19", days: 2 });
+    expect(range.days).toHaveLength(2);
+    expect(range.days[0]).toEqual(plan.days[0]);
+    expect(range.days[1]).toMatchObject({
+      day: "2026-10-20",
+      posts: [{ status: { kind: "published" } }],
+      freeSlots: ["06:30", "07:00", "07:30", "08:00", "13:00", "13:30"].map(
+        (time) => at(time) + 86_400_000,
+      ),
+    });
+    expect(
+      bridge.query.mock.calls.every(([, args]) => args.day === undefined),
+    ).toBe(true);
+    for (const args of [
+      { days: 0 },
+      { days: 15 },
+      { days: 1.5 },
+      { day: "2026-02-30" },
+    ])
+      expect((await invokeTool("schedule", args)).result.isError).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  }
+});
+
+test("MCP board paging preserves counts, facets, previews and validation, while id lookup preserves order and missing posts", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const secret = "test-secret";
+  const call = async (name: string, args: unknown) => {
+    const body = await invokeTool(name, args);
+    expect(body.result.isError, JSON.stringify(body)).not.toBe(true);
+    return JSON.parse(body.result.content[0].text);
+  };
+  try {
+    const imageId = await t.run((ctx) =>
+      storeTestImage(ctx, new Blob(["png"], { type: "image/png" })),
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { id } = await call("create_draft", {
+        parts: [{ text: `Draft ${i}`, imageId }, { text: "Second part" }],
+        meta: { topic: "T1", angle: "A1", format: "F1" },
+      });
+      ids.push(id);
+    }
+    const missing = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "Deleted" }],
+    });
+    await t.mutation(api.posts.deletePost, { secret, id: missing });
+    const published = await t.run((ctx) =>
+      ctx.db.insert("posts", {
+        source: "threads",
+        parts: [{ text: "Published", imageId }],
+        publishedIds: ["live"],
+        status: {
+          kind: "published",
+          at: 1000,
+          permalink: "https://threads.net/live",
+        },
+        metrics: {
+          views: 100,
+          likes: 10,
+          replies: 0,
+          reposts: 0,
+          quotes: 0,
+          shares: 0,
+          syncedAt: 2000,
+        },
+      }),
+    );
+    const all = await call("list_posts", { view: "drafts" });
+    expect(all).toMatchObject({
+      counts: { drafts: 3, scheduled: 0, published: 1, failed: 0 },
+      total: 3,
+      facets: { topic: { T1: 3 }, angle: { A1: 3 }, format: { F1: 3 } },
+    });
+    const page = await call("list_posts", {
+      view: "drafts",
+      offset: 1,
+      limit: 1,
+      topic: "T1",
+      angle: "A1",
+      format: "F1",
+      text: "draft",
+      sort: "date",
+    });
+    expect(page.items).toEqual(all.items.slice(1, 2));
+    expect(page.total).toBe(3);
+    expect(page.items[0].parts).toEqual([
+      {
+        text: expect.stringMatching(/^Draft/),
+        imageId,
+        imageUrl: expect.stringMatching(/^https?:\/\//),
+      },
+      { text: "Second part" },
+    ]);
+    expect(
+      await call("list_posts", { view: "drafts", offset: 3, limit: 1 }),
+    ).toMatchObject({ total: 3, items: [] });
+    for (const [args, message] of [
+      [{ offset: -1 }, "Offset must be a nonnegative integer"],
+      [{ limit: 101 }, "Limit must be an integer between 1 and 100"],
+      [
+        { sort: "views" },
+        "Views and engagement sorting require the published view",
+      ],
+    ] as const) {
+      const invalid = await invokeTool("list_posts", {
+        view: "drafts",
+        ...args,
+      });
+      expect(invalid.result.isError).toBe(true);
+      expect(invalid.result.content[0].text).toContain(message);
+    }
+    const lookup = await call("get_posts", {
+      ids: [ids[2], missing, published, ids[0], ids[2], "unknown"],
+    });
+    expect(lookup).toMatchObject([
+      {
+        id: ids[2],
+        held: false,
+        pinned: false,
+        at: null,
+        status: { kind: "draft" },
+      },
+      null,
+      {
+        id: published,
+        permalink: "https://threads.net/live",
+        metrics: { views: 100 },
+      },
+      { id: ids[0], meta: { topic: "T1" } },
+      { id: ids[2] },
+      null,
+    ]);
+    expect(lookup[0].parts).toEqual(
+      all.items.find((post: { id: string }) => post.id === ids[2]).parts,
+    );
+    await expect(
+      t.query(api.posts.getPosts, { secret: "wrong", ids }),
+    ).rejects.toThrow("Unauthorized");
+    for (const ids of [[], Array.from({ length: 51 }, () => published)])
+      expect((await invokeTool("get_posts", { ids })).result.isError).toBe(
+        true,
+      );
+  } finally {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
   }
 });

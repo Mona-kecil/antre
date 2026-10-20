@@ -1,7 +1,8 @@
+import { getFunctionName } from "convex/server";
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { actions, load } from "./+page.server";
-import { actions as compose } from "./compose/+page.server";
+import { actions as compose, load as loadCompose } from "./compose/+page.server";
 import { load as loadLibrary } from "./library/+page.server";
 import { api } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
@@ -173,6 +174,58 @@ test("library load checks the owner and returns only published posts newest firs
     await expect(loadLibrary(event("someone-else"))).rejects.toMatchObject({
       status: 403,
     });
+  } finally {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
+
+test("compose edit finds draft and failed parts by id and rejects missing or scheduled posts", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  const secret = "test-secret";
+  try {
+    await t.mutation(api.account.connect, {
+      secret,
+      threadsUserId: "owner",
+      username: "owner",
+      accessToken: "test-token",
+      tokenExpiresAt: Date.now() + 100000,
+    });
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "First part" }, { text: "Second part" }],
+      meta: { topic: "T1", notes: "Keep these notes" },
+    });
+    const edit = () =>
+      loadCompose({
+        url: new URL(`https://antre.example/compose?edit=${id}`),
+        locals: { userId: "owner" },
+      } as Parameters<typeof loadCompose>[0]);
+    expect(await edit()).toMatchObject({
+      edit: {
+        id,
+        failed: false,
+        parts: [{ text: "First part" }, { text: "Second part" }],
+        meta: { topic: "T1", notes: "Keep these notes" },
+      },
+      nextSlot: expect.any(Number),
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(id, {
+        status: { kind: "failed", at: Date.now(), error: "Failed" },
+      }),
+    );
+    expect(await edit()).toMatchObject({ edit: { id, failed: true } });
+    await t.mutation(api.posts.queue, { secret, id });
+    await expect(edit()).rejects.toMatchObject({ status: 404 });
+    await t.mutation(api.posts.deletePost, { secret, id });
+    await expect(edit()).rejects.toMatchObject({ status: 404 });
+    expect(
+      bridge.query.mock.calls.map(([query]) => getFunctionName(query)),
+    ).not.toContain("posts:listQueue");
   } finally {
     vi.unstubAllEnvs();
     vi.clearAllMocks();

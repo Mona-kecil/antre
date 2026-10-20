@@ -8,6 +8,7 @@ import {
   deletePost as removePost,
 } from "./lib/postStore";
 import { v } from "convex/values";
+import { DAY, isoDay, slots } from "../src/lib/time";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -253,14 +254,52 @@ export const listQueue = query(
   ),
 );
 
-// One WIB day of the schedule plus post counts for a strip of days around it.
+export const getPosts = query(
+  withSecret({ ids: v.array(v.string()) }, async (ctx: QueryCtx, { ids }) => {
+    if (ids.length < 1 || ids.length > 50)
+      throw new Error("Use between 1 and 50 post ids");
+    const posts = await Promise.all(
+      ids.map(async (value) => {
+        const id = ctx.db.normalizeId("posts", value);
+        const post = id ? await ctx.db.get(id) : null;
+        if (!post) return null;
+        const {
+          libraryIndexed: _indexed,
+          rootPublishedId: _root,
+          ...full
+        } = post;
+        return {
+          ...full,
+          id: post._id,
+          at: post.status.kind === "draft" ? null : post.status.at,
+          pinned: post.pinned ?? post.status.kind === "queued",
+          held: post.status.kind === "held",
+          parts: await partsWithImages(ctx, post.parts),
+          meta: post.meta ?? {},
+          metrics: post.metrics ?? null,
+          permalink:
+            post.status.kind === "published" ? post.status.permalink : null,
+        };
+      }),
+    );
+    return {
+      posts,
+      account: accountState(await ctx.db.query("account").unique()),
+    };
+  }),
+);
+
+// With day, return the UI day and strip counts; omit day for the full range.
 export const schedule = query(
   withSecret(
-    { from: v.number(), days: v.number(), day: v.number() },
+    { from: v.number(), days: v.number(), day: v.optional(v.number()) },
     async (ctx: QueryCtx, { from, days, day }) => {
       if (!Number.isSafeInteger(days) || days < 1 || days > 31)
         throw new Error("Days must be an integer between 1 and 31");
-      if (![from, day].every(Number.isSafeInteger))
+      if (
+        !Number.isSafeInteger(from) ||
+        (day !== undefined && !Number.isSafeInteger(day))
+      )
         throw new Error("From and day must be timestamps");
       const until = from + days * 86_400_000;
       const all = await ctx.db
@@ -269,7 +308,7 @@ export const schedule = query(
           q.gte("status.at", from).lt("status.at", until),
         )
         .collect();
-      if (day < from || day + 86_400_000 > until) {
+      if (day !== undefined && (day < from || day + 86_400_000 > until)) {
         const extra = await ctx.db
           .query("posts")
           .withIndex("by_at", (q) =>
@@ -297,36 +336,50 @@ export const schedule = query(
         .filter(
           (post) =>
             post.status.kind !== "draft" &&
-            post.status.at >= day &&
-            post.status.at < day + 86_400_000,
+            (day === undefined ||
+              (post.status.at >= day && post.status.at < day + DAY)),
         )
         .sort(
           (a, b) =>
             (a.status.kind === "draft" ? 0 : a.status.at) -
             (b.status.kind === "draft" ? 0 : b.status.at),
         );
+      const occupied = occupiedTimes([...active, ...futurePublished]);
+      const now = Date.now();
+      const items = await Promise.all(
+        posts.map(async (post) => ({
+          id: post._id,
+          status: post.status,
+          at: post.status.kind === "draft" ? 0 : post.status.at,
+          pinned: post.pinned ?? post.status.kind === "queued",
+          parts: await partsWithImages(ctx, post.parts),
+          meta: post.meta ?? {},
+          source: post.source,
+          metrics: post.metrics ?? null,
+        })),
+      );
       return {
         settings,
         account: accountState(await ctx.db.query("account").unique()),
         counts,
         held: active.filter((post) => post.status.kind === "held").length,
-        nextSlot: nextSlot(
-          settings,
-          occupiedTimes([...active, ...futurePublished]),
-          Date.now(),
-        ),
-        posts: await Promise.all(
-          posts.map(async (post) => ({
-            id: post._id,
-            status: post.status,
-            at: post.status.kind === "draft" ? 0 : post.status.at,
-            pinned: post.pinned ?? post.status.kind === "queued",
-            parts: await partsWithImages(ctx, post.parts),
-            meta: post.meta ?? {},
-            source: post.source,
-            metrics: post.metrics ?? null,
-          })),
-        ),
+        nextSlot: nextSlot(settings, occupied, now),
+        posts: day === undefined ? [] : items,
+        days:
+          day === undefined
+            ? Array.from({ length: days }, (_, index) => {
+                const start = from + index * DAY;
+                return {
+                  day: isoDay(start),
+                  posts: items.filter(
+                    (post) => post.at >= start && post.at < start + DAY,
+                  ),
+                  freeSlots: slots(start, settings).filter(
+                    (at) => at > now && !occupied.has(at),
+                  ),
+                };
+              })
+            : [],
       };
     },
   ),

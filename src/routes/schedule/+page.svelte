@@ -53,7 +53,13 @@
 	);
 	const free = $derived(
 		slots(data.day, data.settings).filter(
-			(at) => at > now && !data.posts.some((post) => post.at === at)
+			(at) =>
+				at > now &&
+				!data.posts.some(
+					(post) =>
+						post.at === at &&
+						['queued', 'publishing', 'published'].includes(post.status.kind)
+				)
 		)
 	);
 	const queued = $derived(data.posts.filter((post) => post.status.kind === 'queued'));

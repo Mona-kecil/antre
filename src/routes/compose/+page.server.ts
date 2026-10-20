@@ -26,23 +26,23 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const { client, secret } = convex();
   const editId = url.searchParams.get("edit");
   const today = dayStart(Date.now());
-  const [posts, schedule] = await Promise.all([
-    editId ? client.query(api.posts.listQueue, { secret }) : [],
+  const [lookup, schedule] = await Promise.all([
+    editId ? client.query(api.posts.getPosts, { secret, ids: [editId] }) : null,
     client.query(api.posts.schedule, { secret, from: today, days: 1, day: today }),
   ]);
   requireOwner(locals.userId, schedule.account);
-  const post = posts.find(
+  const post = lookup?.posts.find(
     (post) =>
-      post._id === editId &&
+      post?.id === editId &&
       (post.status.kind === "draft" || post.status.kind === "failed"),
   );
   if (editId && !post)
     error(404, "This draft is gone or already scheduled. Edit it from Drafts.");
-  if (post) requireOwner(locals.userId, post.account);
+  if (post) requireOwner(locals.userId, lookup?.account ?? null);
   return {
     edit: post
       ? {
-          id: post._id,
+          id: post.id,
           failed: post.status.kind === "failed",
           parts: post.parts.map((part) => ({
             text: part.text,

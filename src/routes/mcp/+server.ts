@@ -5,7 +5,7 @@ import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { convex } from "#lib/server/convex.ts";
-import { wib } from "#lib/time.ts";
+import { dayStart, wib } from "#lib/time.ts";
 import { IMAGE_TYPES } from "../../../convex/lib/media";
 import { decodeImage, downloadImage, MAX_IMAGE_BASE64_LENGTH } from "./images";
 import type { RequestHandler } from "./$types";
@@ -79,8 +79,9 @@ const handler = createMcpHandler(
     server.registerTool(
       "upload_image",
       {
+        annotations: { destructiveHint: false, openWorldHint: true },
         description:
-          "Upload a JPEG or PNG image (1 byte–8 MB) from exactly one public HTTP(S) url or raw base64 + contentType. URL downloads time out after 10 seconds. Vercel caps request bodies near 4.5 MB, so for base64 images over about 3 MB use image_upload_url instead. Returns imageId and previewUrl; use imageId in a create_draft/update_draft part, then verify with search_posts fullParts=true or list_queue. SVG is not accepted; export PNG.",
+          "Upload a JPEG or PNG image (1 byte–8 MB) from exactly one public HTTP(S) url or raw base64 + contentType. URL downloads time out after 10 seconds. Vercel caps request bodies near 4.5 MB, so for base64 images over about 3 MB use image_upload_url instead. Returns imageId and previewUrl; use imageId in a create_draft/update_draft part, then verify with search_posts fullParts=true or get_posts. SVG is not accepted; export PNG.",
         inputSchema: z
           .strictObject({
             url: z.url({ protocol: /^https?$/ }).optional(),
@@ -129,8 +130,9 @@ const handler = createMcpHandler(
     server.registerTool(
       "image_upload_url",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
-          "Get a one-time Convex upload URL and a curl example for a local JPEG/PNG file (1 byte–8 MB). POST the file to uploadUrl, then use the returned storageId as imageId in a create_draft/update_draft part. Verify with search_posts fullParts=true or list_queue. SVG is not accepted; export PNG.",
+          "Get a one-time Convex upload URL and a curl example for a local JPEG/PNG file (1 byte–8 MB). POST the file to uploadUrl, then use the returned storageId as imageId in a create_draft/update_draft part. Verify with search_posts fullParts=true or get_posts. SVG is not accepted; export PNG.",
         inputSchema: z.strictObject({}),
       },
       async () => {
@@ -149,25 +151,81 @@ const handler = createMcpHandler(
       },
     );
     server.registerTool(
-      "list_queue",
+      "schedule",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
-          "List posts with status, held reason, pinned state, account refresh errors, ISO/WIB times, and image previews",
-        inputSchema: z.object({ days: z.number().positive().optional() }),
+          "Read the Schedule tab for 1–14 WIB days (default: today, one day). Returns settings, account state without tokens, held count and nextSlot once, plus days with full posts and image previews. freeSlots and nextSlot are epoch milliseconds; freeSlots exclude past times and slots occupied by queued, publishing or published posts. Held posts await account reconnect and do not occupy slots. After reconnect, keepTimes advances their WIB clock time by whole days (using a later free slot to avoid collisions or preserve order); autoFill requeues held posts then later unpinned posts into free slots.",
+        inputSchema: z.object({
+          day: z.iso.date().optional(),
+          days: z.number().int().min(1).max(14).optional(),
+        }),
       },
-      async ({ days }) => {
+      async ({ day, days }) => {
+        const { client, secret } = convex();
+        const from =
+          day === undefined
+            ? dayStart(Date.now())
+            : Date.parse(`${day}T00:00:00+07:00`);
+        const {
+          settings,
+          account,
+          held,
+          nextSlot,
+          days: plan,
+        } = await client.query(api.posts.schedule, {
+          secret,
+          from,
+          days: days ?? 1,
+        });
+        return result({ settings, account, held, nextSlot, days: plan });
+      },
+    );
+    server.registerTool(
+      "list_posts",
+      {
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        description:
+          "Read a Drafts/Library board with view counts, total, facets and a page of full posts with image previews. Scheduled includes queued, publishing and held posts. offset defaults to 0; limit must be 1–100 (default 25). Views/engagement sorts require the published view. Uses the board's validation and filtering rules.",
+        inputSchema: z.object({
+          view: z.enum(["drafts", "scheduled", "published", "failed"]),
+          topic: z.string().optional(),
+          angle: z.string().optional(),
+          format: z.string().optional(),
+          text: z.string().optional(),
+          sort: z.enum(["date", "views", "engagement"]).optional(),
+          offset: z.number().optional(),
+          limit: z.number().optional(),
+        }),
+      },
+      async (args) => {
         const { client, secret } = convex();
         return result(
-          await client.query(api.posts.listQueue, {
-            secret,
-            ...(days === undefined ? {} : { days }),
-          }),
+          await client.query(api.library.page, { secret, ...args }),
         );
+      },
+    );
+    server.registerTool(
+      "get_posts",
+      {
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        description:
+          "Fetch 1–50 full posts with status, at, pinned, held, parts with image previews, meta, metrics and published permalink, in input order; unknown ids return null. Use schedule for account state, held posts and the day's plan.",
+        inputSchema: z.object({ ids: z.array(id).min(1).max(50) }),
+      },
+      async ({ ids }) => {
+        const { client, secret } = convex();
+        const { posts } = await client.query(api.posts.getPosts, {
+          secret,
+          ids,
+        });
+        return result(posts);
       },
     );
     server.registerTool(
       "create_draft",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Create a Threads draft. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
         inputSchema: z.object({ parts, meta }),
@@ -187,6 +245,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "update_draft",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Edit a draft or the unpublished parts of a failed post. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
         inputSchema: z.object({ id, parts: parts.optional(), meta }),
@@ -207,8 +266,9 @@ const handler = createMcpHandler(
     server.registerTool(
       "queue",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
-          "Queue at an exact ISO time (pinned) or the next free posting slot (unpinned)",
+          "Queue a draft or failed post at an exact ISO time (pinned) or the next free posting slot (unpinned). If the account needs reconnecting when its time comes, the post becomes held (see schedule)",
         inputSchema: z.object({
           id,
           at: z.iso.datetime({ offset: true }).optional(),
@@ -229,6 +289,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "reschedule",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Move a queued post to an exact future ISO time (pinned); omit at for the next free slot (unpinned)",
         inputSchema: z.object({
@@ -251,6 +312,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "swap",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Exchange two queued posts' future times and pinned states",
         inputSchema: z.object({ id, otherId: id }),
@@ -270,6 +332,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_settings",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
           "Read posting windows, interval, time zone, and gap policy",
         inputSchema: z.object({}),
@@ -282,6 +345,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "update_settings",
       {
+        annotations: { destructiveHint: true, openWorldHint: false },
         description:
           "Replace posting settings; windows include both endpoints. Existing queued times stay fixed",
         inputSchema: z.object({
@@ -303,6 +367,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "unqueue",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description: "Return a queued post to drafts",
         inputSchema: z.object({ id }),
       },
@@ -320,7 +385,9 @@ const handler = createMcpHandler(
     server.registerTool(
       "publish_now",
       {
-        description: "Publish now, resuming any parts already live",
+        annotations: { destructiveHint: true, openWorldHint: true },
+        description:
+          "Publish now or retry a failed post, running the recovery check and resuming any parts already live",
         inputSchema: z.object({ id }),
       },
       async ({ id }) => {
@@ -337,6 +404,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "delete_post",
       {
+        annotations: { destructiveHint: true, openWorldHint: false },
         description:
           "Delete a post from antre; live Threads posts remain on Threads",
         inputSchema: z.object({ id }),
@@ -355,6 +423,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "taxonomy",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
           "List topic, angle, and format codes and names for tagging posts",
         inputSchema: z.object({}),
@@ -367,6 +436,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "set_taxonomy",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Upsert taxonomy entries by dimension and code; codes are user-defined data",
         inputSchema: z.object({
@@ -390,6 +460,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "tag_posts",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Set meta on posts in any status. Topic/angle/format are codes from taxonomy. Omitted fields stay unchanged",
         inputSchema: z.object({
@@ -406,6 +477,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "search_posts",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
           "Search library; tags are codes from taxonomy. fullParts=true includes imageUrl on image parts to verify attachments. Dates/times without offsets use Asia/Jakarta (WIB); until dates include the whole day, until times are exclusive. Sort descending. Engagement = (likes + replies + reposts + quotes) / views; null without positive views",
         inputSchema: z.object({
@@ -440,6 +512,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "insights",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
           "Group published posts by taxonomy codes (untagged = null). Mean engagement = mean of (likes + replies + reposts + quotes) / views; best post uses engagement. minViews defaults to 1; zero views excluded. WIB date ranges match search_posts. Followers use latest snapshots at/before start and before end",
         inputSchema: z.object({
@@ -458,6 +531,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "list_replies",
       {
+        annotations: { readOnlyHint: true, openWorldHint: false },
         description:
           "List replies newest first with draft (null if none), parent and root post text. Set drafted=true to list pending drafts. unanswered defaults to true: excludes yours, hidden replies, and replies you answered. offset defaults to 0; limit defaults to 50; total counts matches before paging. syncedAt is the last complete reply sync (ISO or null); call sync_now if stale. Sync covers posts from the last 7 days",
         inputSchema: z.object({
@@ -478,6 +552,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "draft_reply",
       {
+        annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Save a draft answer to a stored replyId for human review; never publishes",
         inputSchema: z.object({
@@ -522,6 +597,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "discard_reply_draft",
       {
+        annotations: { destructiveHint: true, openWorldHint: false },
         description: "Discard a stored reply draft without publishing",
         inputSchema: z.object({ replyId: z.string().min(1) }),
       },
@@ -535,6 +611,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "hide_reply",
       {
+        annotations: { destructiveHint: true, openWorldHint: true },
         description:
           "Hide (hide=true) or unhide (hide=false) a stored reply on Threads and update its local visibility",
         inputSchema: z.object({
@@ -552,6 +629,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "sync_now",
       {
+        annotations: { destructiveHint: true, openWorldHint: true },
         description:
           "Import top-level Threads posts, remove published posts missing from a complete sync if older than 5 minutes, refresh recent/missing metrics, snapshot followers, and sync replies on posts from the last 7 days. Returns imported, removed, metricsUpdated, replies (rows synced), and any import, insights, or reply sync error",
         inputSchema: z.object({}),
