@@ -1,5 +1,6 @@
 import {
   activePosts,
+  audienceMetrics,
   creationOrder,
   postsByKind,
   schedulingPosts,
@@ -276,7 +277,7 @@ export const getPosts = query(
           held: post.status.kind === "held",
           parts: await partsWithImages(ctx, post.parts),
           meta: post.meta ?? {},
-          metrics: post.metrics ?? null,
+          metrics: audienceMetrics(post),
           permalink:
             post.status.kind === "published" ? post.status.permalink : null,
         };

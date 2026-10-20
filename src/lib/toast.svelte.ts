@@ -60,6 +60,6 @@ export function act(
       } else if (result.type === "error") {
         toast("Something went wrong. Refresh and try again.", { error: true });
       }
-      await update({ reset: false });
+      await update({ reset: false, navigate: false });
     };
 }
