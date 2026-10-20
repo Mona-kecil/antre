@@ -16,6 +16,8 @@ Convex configuration writes `.env.local`, which is gitignored. Set `ANTRE_SECRET
 
 Set the server variables listed in [.env.example](.env.example). Connect the owner through Threads OAuth at `/login`. No real platform credentials are needed for tests.
 
+Production builds require the server connection and authentication variables. Vercel previews can build the public pages with those values absent. Owner pages and MCP access still require their runtime configuration.
+
 ## Connect LinkedIn
 
 1. Create a LinkedIn developer app. Enable **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`.
