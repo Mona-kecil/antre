@@ -7,7 +7,7 @@
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
-	const composing = $derived(page.url.pathname.startsWith('/compose'));
+	const composing = $derived(page.url.pathname === '/compose' || page.url.pathname === '/linkedin/compose');
 	const pending = $derived(navigating.to !== null);
 </script>
 
@@ -25,7 +25,7 @@
 <div class="app" class:composing aria-busy={pending}>
 	{@render children()}
 </div>
-{#if !composing}<TabBar />{/if}
+	{#if !composing && page.url.pathname !== '/privacy'}<TabBar />{/if}
 <Toasts />
 
 <style>

@@ -7,6 +7,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { convex } from "#lib/server/convex.ts";
 import { dayStart, wib } from "#lib/time.ts";
 import { topicTagSchema } from "#lib/topicTag.ts";
+import { linkedinTextSchema } from "#lib/linkedin.ts";
 import { IMAGE_TYPES } from "../../../convex/lib/media";
 import { decodeImage, downloadImage, MAX_IMAGE_BASE64_LENGTH } from "./images";
 import type { RequestHandler } from "./$types";
@@ -15,6 +16,10 @@ const id = z
   .string()
   .min(1)
   .transform((value) => value as Id<"posts">);
+const linkedinId = z
+  .string()
+  .min(1)
+  .transform((value) => value as Id<"linkedinPosts">);
 const parts = z
   .array(
     z.object({
@@ -57,18 +62,20 @@ function result(value: unknown) {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(value ?? { ok: true }, (key, item) =>
-          [
-            "at",
-            "startedAt",
-            "heldAt",
-            "retryAt",
-            "tokenExpiresAt",
-            "lastRefreshErrorAt",
-            "_creationTime",
-          ].includes(key) && typeof item === "number"
-            ? { iso: new Date(item).toISOString(), wib: wib(item) }
-            : item,
+        text: JSON.stringify(
+          value === undefined ? { ok: true } : value,
+          (key, item) =>
+            [
+              "at",
+              "startedAt",
+              "heldAt",
+              "retryAt",
+              "tokenExpiresAt",
+              "lastRefreshErrorAt",
+              "_creationTime",
+            ].includes(key) && typeof item === "number"
+              ? { iso: new Date(item).toISOString(), wib: wib(item) }
+              : item,
         ),
       },
     ],
@@ -683,6 +690,217 @@ const handler = createMcpHandler(
       async () => {
         const { client, secret } = convex();
         return result(await client.action(api.sync.now, { secret }));
+      },
+    );
+    server.registerTool(
+      "list_linkedin_posts",
+      {
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        description:
+          "Read the separate LinkedIn personal-profile text board. Returns full posts, total, view counts, account state without tokens, posting settings and nextSlot. Scheduled includes queued, publishing and held posts. Unknown-held posts include a numeric retryAttempt for attempt-bound retry consent. offset defaults to 0; limit defaults to 25 and must be 1–100. LinkedIn content and internal topic labels are separate from Threads.",
+        inputSchema: z.strictObject({
+          view: z.enum(["drafts", "scheduled", "published", "failed"]),
+          offset: z.number().int().nonnegative().optional(),
+          limit: z.number().int().min(1).max(100).optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.query(api.linkedin.list, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "get_linkedin_post",
+      {
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        description:
+          "Read one LinkedIn personal-profile text post with its status, internal topic and notes, and published permalink when available. Unknown-held posts include a numeric retryAttempt; use that unchanged as expectedStartedAt only after the owner approves retrying that attempt. Unknown ids return null. Use list_linkedin_posts for LinkedIn account and queue state.",
+        inputSchema: z.strictObject({ id: linkedinId }),
+      },
+      async ({ id }) => {
+        const { client, secret } = convex();
+        return result(await client.query(api.linkedin.get, { secret, id }));
+      },
+    );
+    server.registerTool(
+      "create_linkedin_draft",
+      {
+        annotations: { destructiveHint: false, openWorldHint: false },
+        description:
+          "Create a separate LinkedIn personal-profile text-only draft of 1–3000 characters. No images, videos or Threads parts. topic and notes are internal LinkedIn labels, not public tags or Threads taxonomy. Creating a draft does not publish it.",
+        inputSchema: z.strictObject({
+          text: linkedinTextSchema,
+          topic: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result({
+          id: await client.mutation(api.linkedin.createDraft, {
+            secret,
+            ...args,
+            source: "agent",
+          }),
+        });
+      },
+    );
+    server.registerTool(
+      "update_linkedin_draft",
+      {
+        annotations: { destructiveHint: false, openWorldHint: false },
+        description:
+          "Replace a LinkedIn draft's text, internal topic and notes. Text is required and must use 1–3000 characters; omitted topic or notes clears that field. Personal-profile text only; no media or Threads parts. Unqueue scheduled posts before editing.",
+        inputSchema: z.strictObject({
+          id: linkedinId,
+          text: linkedinTextSchema,
+          topic: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.updateDraft, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "queue_linkedin_post",
+      {
+        annotations: { destructiveHint: true, openWorldHint: true },
+        description:
+          "Schedule a LinkedIn personal-profile text post for public publication at an exact future ISO time, or omit at for the next free LinkedIn slot. This authorizes a public post. Use only after the user approves publishing this content. LinkedIn uses its own queue and posting settings.",
+        inputSchema: z.strictObject({
+          id: linkedinId,
+          at: z.iso.datetime({ offset: true }).optional(),
+        }),
+      },
+      async ({ id, at }) => {
+        const { client, secret } = convex();
+        return result({
+          at: await client.mutation(api.linkedin.queue, {
+            secret,
+            id,
+            ...(at === undefined ? {} : { at: Date.parse(at) }),
+          }),
+        });
+      },
+    );
+    server.registerTool(
+      "unqueue_linkedin_post",
+      {
+        annotations: { destructiveHint: false, openWorldHint: false },
+        description:
+          "Return a queued or auth-held LinkedIn post to drafts before it begins publishing. Does not remove a public LinkedIn post or clear an unknown publish outcome.",
+        inputSchema: z.strictObject({ id: linkedinId }),
+      },
+      async ({ id }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.unqueue, { secret, id }),
+        );
+      },
+    );
+    server.registerTool(
+      "delete_linkedin_post",
+      {
+        annotations: { destructiveHint: true, openWorldHint: false },
+        description:
+          "Delete a LinkedIn post from antre unless it is publishing. Published posts remain on LinkedIn. Deleting a held post with an unknown outcome does not establish whether LinkedIn already published it.",
+        inputSchema: z.strictObject({ id: linkedinId }),
+      },
+      async ({ id }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.deletePost, { secret, id }),
+        );
+      },
+    );
+    server.registerTool(
+      "publish_linkedin_post",
+      {
+        annotations: { destructiveHint: true, openWorldHint: true },
+        description:
+          "Publish a LinkedIn personal-profile text post publicly now. Use only after the user approves publishing this content. For failed or unknown-outcome posts use retry_linkedin_post; an unknown outcome may already have created a public post.",
+        inputSchema: z.strictObject({ id: linkedinId }),
+      },
+      async ({ id }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.publishNow, { secret, id }),
+        );
+      },
+    );
+    server.registerTool(
+      "retry_linkedin_post",
+      {
+        annotations: { destructiveHint: true, openWorldHint: true },
+        description:
+          "Retry public publication of a failed or held LinkedIn personal-profile text post. If status.reason is unknown, a public post may already exist: read the current retryAttempt with get_linkedin_post or list_linkedin_posts, ask the owner to check LinkedIn, and explain the duplicate risk. Only after their explicit acknowledgement for that attempt, set confirmDuplicateRisk=true and pass its retryAttempt unchanged as expectedStartedAt. A new unknown attempt requires fresh owner consent. Never infer that acknowledgement from an earlier publish request. Ordinary failed or auth-held retries need neither confirmation field.",
+        inputSchema: z.strictObject({
+          id: linkedinId,
+          confirmDuplicateRisk: z
+            .boolean()
+            .optional()
+            .describe(
+              "Set true only after the user explicitly acknowledges that retrying an unknown outcome can create a duplicate public LinkedIn post.",
+            ),
+          expectedStartedAt: z
+            .number()
+            .optional()
+            .describe(
+              "The unchanged numeric retryAttempt from the current get_linkedin_post or list_linkedin_posts result that the owner reviewed and approved. Required with confirmDuplicateRisk=true for an unknown outcome; never reuse consent for a new attempt.",
+            ),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.retry, { secret, ...args }),
+        );
+      },
+    );
+    server.registerTool(
+      "get_linkedin_settings",
+      {
+        annotations: { readOnlyHint: true, openWorldHint: false },
+        description:
+          "Read LinkedIn's separate posting windows, interval, time zone, gap policy, internal topics and writing instructions. Follow these channel-specific instructions when drafting. Use list_linkedin_posts for LinkedIn account state.",
+        inputSchema: z.strictObject({}),
+      },
+      async () => {
+        const { client, secret } = convex();
+        return result(await client.query(api.linkedin.getSettings, { secret }));
+      },
+    );
+    server.registerTool(
+      "set_linkedin_settings",
+      {
+        annotations: { destructiveHint: true, openWorldHint: false },
+        description:
+          "Replace LinkedIn's separate posting settings; windows include both endpoints and existing queued times stay fixed. Optional topics and writingInstructions replace LinkedIn's internal topic list and drafting rules; omitted fields stay unchanged. Does not change Threads settings or taxonomy.",
+        inputSchema: z.strictObject({
+          windows: z
+            .array(z.strictObject({ start: z.string(), end: z.string() }))
+            .min(1),
+          intervalMinutes: z.number().int().min(5).max(240),
+          timeZone: z.literal("Asia/Jakarta"),
+          gapPolicy: z.enum(["autoFill", "keepTimes"]),
+          topics: z.array(z.string()).optional(),
+          writingInstructions: z.string().optional(),
+        }),
+      },
+      async (args) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.linkedin.updateSettings, {
+            secret,
+            ...args,
+          }),
+        );
       },
     );
   },

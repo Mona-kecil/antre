@@ -18,4 +18,9 @@ crons.daily(
   internal.sync.run,
 );
 crons.interval("sync Threads replies", { hours: 1 }, internal.replies.sync);
+crons.interval(
+  "hold stuck LinkedIn posts",
+  { minutes: 10 },
+  internal.linkedin.sweepStuck,
+);
 export default crons;

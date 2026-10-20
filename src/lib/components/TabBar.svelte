@@ -2,24 +2,72 @@
 	import { navigating, page } from '$app/state';
 	import Icon, { type IconName } from './Icon.svelte';
 
-	const tabs: { href: string; label: string; icon: IconName; badge?: 'drafts' | 'replies' }[] = [
+	const threadsTabs: {
+		href: string;
+		label: string;
+		icon: IconName;
+		badge?: 'drafts' | 'replies';
+	}[] = [
 		{ href: '/', label: 'Drafts', icon: 'drafts', badge: 'drafts' },
 		{ href: '/schedule', label: 'Schedule', icon: 'schedule' },
 		{ href: '/compose', label: 'New', icon: 'plus' },
 		{ href: '/replies', label: 'Replies', icon: 'replies', badge: 'replies' },
 		{ href: '/library', label: 'Library', icon: 'library' }
 	];
+	const linkedin = $derived(page.url.pathname.startsWith('/linkedin'));
+	const tabs: typeof threadsTabs = $derived(
+		linkedin
+			? [
+					{
+						href: '/linkedin',
+						label: 'Drafts',
+						icon: 'drafts',
+						badge: 'drafts'
+					},
+					{
+						href: '/linkedin?view=scheduled',
+						label: 'Schedule',
+						icon: 'schedule'
+					},
+					{ href: '/linkedin/compose', label: 'New', icon: 'plus' },
+					{
+						href: '/linkedin?view=published',
+						label: 'Library',
+						icon: 'library'
+					}
+				]
+			: threadsTabs
+	);
 	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
 	const pendingPath = $derived(navigating.to?.url.pathname);
 	const matches = (pathname: string | undefined, href: string) =>
 		href === '/' ? pathname === '/' : (pathname?.startsWith(href) ?? false);
+	function matchesLinkedIn(
+		url:
+			Pick<typeof page.url, 'pathname' | 'searchParams' | 'href'> | undefined,
+		href: string
+	) {
+		if (!url) return false;
+		const target = new URL(href, url.href);
+		const view = url.searchParams.get('view');
+		const section =
+			view === 'scheduled' || view === 'published' ? view : 'drafts';
+		return (
+			url.pathname === target.pathname &&
+			section === (target.searchParams.get('view') ?? 'drafts')
+		);
+	}
 </script>
 
-<nav aria-label="Main">
+<nav aria-label="Main" class:linkedin>
 	{#each tabs as tab}
 		{@const count = tab.badge ? badges[tab.badge] : 0}
-		{@const active = matches(page.url.pathname, tab.href)}
-		{@const pending = matches(pendingPath, tab.href)}
+		{@const active = linkedin
+			? matchesLinkedIn(page.url, tab.href)
+			: matches(page.url.pathname, tab.href)}
+		{@const pending = linkedin
+			? matchesLinkedIn(navigating.to?.url, tab.href)
+			: matches(pendingPath, tab.href)}
 		<a
 			href={tab.href}
 			data-sveltekit-preload-code="eager"
@@ -29,7 +77,11 @@
 		>
 			<span class="pending-marker" aria-hidden="true"></span>
 			<span class="icon">
-				<Icon name={tab.icon} size={tab.icon === 'plus' ? 22 : 24} stroke={active ? 2.25 : 1.75} />
+				<Icon
+					name={tab.icon}
+					size={tab.icon === 'plus' ? 22 : 24}
+					stroke={active ? 2.25 : 1.75}
+				/>
 				{#if count}<b class="badge num">{count > 999 ? '999+' : count}</b>{/if}
 			</span>
 			<span class={tab.icon === 'plus' ? 'sr-only' : 'label'}>{tab.label}</span>
@@ -53,6 +105,10 @@
 		padding: 0 4px var(--safe-b);
 		background: var(--bg);
 		border-top: 1px solid var(--line);
+	}
+
+	nav.linkedin {
+		grid-template-columns: repeat(4, 1fr);
 	}
 
 	a {

@@ -1,13 +1,22 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { page } from '$app/state';
+	import ChannelSwitch from './ChannelSwitch.svelte';
 
-	let { title, lead, children }: { title: string; lead?: Snippet; children?: Snippet } = $props();
+	let {
+		title,
+		lead,
+		children
+	}: { title: string; lead?: Snippet; children?: Snippet } = $props();
 </script>
 
 <header class="bar">
 	{@render lead?.()}
 	<h1>{title}</h1>
-	<div class="end">{@render children?.()}</div>
+	<div class="end">
+		{#if !page.url.pathname.endsWith('/compose')}<ChannelSwitch
+			/>{/if}{@render children?.()}
+	</div>
 </header>
 
 <style>

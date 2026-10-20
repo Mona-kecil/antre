@@ -11,7 +11,12 @@ export const handle: Handle = async ({ event, resolve }) => {
     event.request.headers.get("origin") !== event.url.origin
   )
     error(403, "Cross-site writes are forbidden");
-  if (path === "/login" || path.startsWith("/auth/") || path === "/mcp")
+  if (
+    path === "/login" ||
+    path === "/privacy" ||
+    path.startsWith("/auth/") ||
+    path === "/mcp"
+  )
     return resolve(event);
   const session = readSession(event.cookies.get("antre_session"));
   if (!session) redirect(303, "/login");

@@ -16,6 +16,7 @@ import type * as lib_media from "../lib/media.js";
 import type * as lib_postStore from "../lib/postStore.js";
 import type * as lib_scheduling from "../lib/scheduling.js";
 import type * as library from "../library.js";
+import type * as linkedin from "../linkedin.js";
 import type * as posts from "../posts.js";
 import type * as publishing from "../publishing.js";
 import type * as replies from "../replies.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   "lib/postStore": typeof lib_postStore;
   "lib/scheduling": typeof lib_scheduling;
   library: typeof library;
+  linkedin: typeof linkedin;
   posts: typeof posts;
   publishing: typeof publishing;
   replies: typeof replies;

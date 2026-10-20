@@ -289,6 +289,17 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
     "discard_reply_draft",
     "hide_reply",
     "sync_now",
+    "list_linkedin_posts",
+    "get_linkedin_post",
+    "create_linkedin_draft",
+    "update_linkedin_draft",
+    "queue_linkedin_post",
+    "unqueue_linkedin_post",
+    "delete_linkedin_post",
+    "publish_linkedin_post",
+    "retry_linkedin_post",
+    "get_linkedin_settings",
+    "set_linkedin_settings",
   ]);
   for (const tool of body.result.tools) {
     expect(tool.annotations, tool.name).toBeDefined();
@@ -302,6 +313,9 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
         "search_posts",
         "insights",
         "list_replies",
+        "list_linkedin_posts",
+        "get_linkedin_post",
+        "get_linkedin_settings",
       ].includes(tool.name)
     )
       expect(tool.annotations.readOnlyHint, tool.name).toBe(true);
@@ -314,6 +328,11 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
         "send_reply",
         "hide_reply",
         "sync_now",
+        "queue_linkedin_post",
+        "delete_linkedin_post",
+        "publish_linkedin_post",
+        "retry_linkedin_post",
+        "set_linkedin_settings",
       ].includes(tool.name)
     )
       expect(tool.annotations.destructiveHint, tool.name).toBe(true);
@@ -324,6 +343,9 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
         "send_reply",
         "hide_reply",
         "sync_now",
+        "queue_linkedin_post",
+        "publish_linkedin_post",
+        "retry_linkedin_post",
       ].includes(tool.name)
     )
       expect(tool.annotations.openWorldHint, tool.name).toBe(true);
@@ -337,6 +359,27 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
     "the exact draft text the human saw and approved; must match the stored draft",
   );
   expect(send.description).toContain("explicitly told you to send it");
+  const retry = body.result.tools.find(
+    (tool: { name: string }) => tool.name === "retry_linkedin_post",
+  );
+  expect(retry.inputSchema.required).toEqual(["id"]);
+  expect(
+    retry.inputSchema.properties.confirmDuplicateRisk.description,
+  ).toContain("explicitly acknowledges");
+  expect(retry.description).toContain("Never infer");
+  expect(retry.inputSchema.properties.expectedStartedAt.type).toBe("number");
+  expect(retry.inputSchema.properties.expectedStartedAt.description).toContain(
+    "unchanged numeric retryAttempt",
+  );
+  const createLinkedin = body.result.tools.find(
+    (tool: { name: string }) => tool.name === "create_linkedin_draft",
+  );
+  expect(Object.keys(createLinkedin.inputSchema.properties)).toEqual([
+    "text",
+    "topic",
+    "notes",
+  ]);
+  expect(createLinkedin.inputSchema.additionalProperties).toBe(false);
 });
 
 test("MCP tags and searches published posts through Convex", async () => {
@@ -843,6 +886,322 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
       );
   } finally {
     vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
+
+test("LinkedIn MCP drafts, labels, queue and settings use the separate Convex board", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-19T05:45:00+07:00"));
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const secret = "test-secret";
+  const call = async (name: string, args: unknown) => {
+    const body = await invokeTool(name, args);
+    expect(body.result.isError, JSON.stringify(body)).not.toBe(true);
+    return JSON.parse(body.result.content[0].text);
+  };
+  try {
+    await t.mutation(api.linkedin.connect, {
+      secret,
+      memberId: "linkedin-member",
+      name: "LinkedIn Owner",
+      accessToken: "never-return-linkedin-token",
+      tokenExpiresAt: Date.now() + 86_400_000,
+    });
+    const threads = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "web",
+      parts: [{ text: "Threads content" }],
+      meta: { topic: "THREADS-TOPIC" },
+    });
+    const threadsAt = await t.mutation(api.posts.queue, {
+      secret,
+      id: threads,
+    });
+    const settings = {
+      windows: [{ start: "06:00", end: "09:00" }],
+      intervalMinutes: 60,
+      timeZone: "Asia/Jakarta",
+      gapPolicy: "keepTimes",
+      topics: ["Engineering", "Writing"],
+      writingInstructions: "Describe shipped systems with concrete examples.",
+    };
+    expect(await call("get_linkedin_settings", {})).toMatchObject({
+      intervalMinutes: 60,
+      topics: [],
+      writingInstructions: "",
+    });
+    expect(await call("set_linkedin_settings", settings)).toEqual(settings);
+    const {
+      topics: _topics,
+      writingInstructions: _instructions,
+      ...queueSettings
+    } = settings;
+    expect(await call("set_linkedin_settings", queueSettings)).toEqual(
+      settings,
+    );
+    expect(await t.query(api.posts.getSettings, { secret })).toMatchObject({
+      intervalMinutes: 30,
+    });
+
+    const first = await call("create_linkedin_draft", {
+      text: " A lesson from shipping ",
+      topic: "Engineering",
+      notes: "Keep the example",
+    });
+    const second = await call("create_linkedin_draft", {
+      text: "🪵".repeat(3000),
+    });
+    expect(await call("get_linkedin_post", { id: first.id })).toMatchObject({
+      text: "A lesson from shipping",
+      topic: "Engineering",
+      notes: "Keep the example",
+      source: "agent",
+      status: { kind: "draft" },
+    });
+    await call("update_linkedin_draft", {
+      id: first.id,
+      text: "A revised lesson",
+    });
+    const edited = await call("get_linkedin_post", { id: first.id });
+    expect(edited.text).toBe("A revised lesson");
+    expect(edited).not.toHaveProperty("topic");
+    expect(edited).not.toHaveProperty("notes");
+    const board = await call("list_linkedin_posts", {
+      view: "drafts",
+      offset: 1,
+      limit: 1,
+    });
+    expect(board).toMatchObject({
+      total: 2,
+      counts: { drafts: 2, scheduled: 0, published: 0, failed: 0 },
+      account: { memberId: "linkedin-member", name: "LinkedIn Owner" },
+      settings,
+    });
+    expect(board.items).toHaveLength(1);
+    expect(board.items[0].id).not.toBe(threads);
+    expect(JSON.stringify(board)).not.toContain("accessToken");
+    expect(JSON.stringify(board)).not.toContain("never-return-linkedin-token");
+    expect(await call("queue_linkedin_post", { id: first.id })).toMatchObject({
+      at: { iso: new Date(threadsAt).toISOString() },
+    });
+    expect(await call("get_linkedin_post", { id: first.id })).toMatchObject({
+      status: { kind: "queued" },
+      pinned: false,
+    });
+    await call("queue_linkedin_post", {
+      id: second.id,
+      at: "2026-10-19T08:00:00+07:00",
+    });
+    expect(await call("get_linkedin_post", { id: second.id })).toMatchObject({
+      status: { kind: "queued", at: { iso: "2026-10-19T01:00:00.000Z" } },
+      pinned: true,
+    });
+    expect(
+      await call("list_linkedin_posts", { view: "scheduled" }),
+    ).toMatchObject({
+      total: 2,
+      counts: { drafts: 0, scheduled: 2, published: 0, failed: 0 },
+    });
+    await call("unqueue_linkedin_post", { id: second.id });
+    await call("delete_linkedin_post", { id: second.id });
+    expect(await call("get_linkedin_post", { id: second.id })).toBeNull();
+    expect(
+      await t.query(api.posts.getPosts, { secret, ids: [threads] }),
+    ).toMatchObject({
+      posts: [
+        {
+          meta: { topic: "THREADS-TOPIC" },
+          status: { kind: "queued", at: threadsAt },
+        },
+      ],
+    });
+    for (const args of [
+      { text: " " },
+      { text: "a".repeat(3001) },
+      { text: "🪵".repeat(3001) },
+      {
+        text: "Text with unsupported parts",
+        parts: [{ text: "Threads part" }],
+      },
+      { text: "Text with unsupported image", imageId: "image" },
+    ]) {
+      const before = bridge.mutation.mock.calls.length;
+      expect(
+        (await invokeTool("create_linkedin_draft", args)).result.isError,
+      ).toBe(true);
+      expect(bridge.mutation.mock.calls).toHaveLength(before);
+    }
+    for (const args of [
+      { offset: -1 },
+      { offset: 1.5 },
+      { limit: 0 },
+      { limit: 101 },
+    ])
+      expect(
+        (await invokeTool("list_linkedin_posts", { view: "drafts", ...args }))
+          .result.isError,
+      ).toBe(true);
+    expect(
+      (
+        await invokeTool("update_linkedin_draft", {
+          id: first.id,
+          topic: "Changed",
+        })
+      ).result.isError,
+    ).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  }
+});
+
+test("LinkedIn MCP publishes through Convex and requires explicit consent to retry an unknown outcome", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  vi.stubEnv("LINKEDIN_API_VERSION", "202608");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-19T05:45:00+07:00"));
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
+    async () =>
+      new Response(null, {
+        status: 201,
+        headers: { "x-restli-id": `urn:li:share:${fetch.mock.calls.length}` },
+      }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const call = async (name: string, args: unknown) => {
+    const body = await invokeTool(name, args);
+    expect(body.result.isError, JSON.stringify(body)).not.toBe(true);
+    return JSON.parse(body.result.content[0].text);
+  };
+  try {
+    await t.mutation(api.linkedin.connect, {
+      secret: "test-secret",
+      memberId: "member",
+      name: "Owner",
+      accessToken: "fake-token",
+      tokenExpiresAt: Date.now() + 86_400_000,
+    });
+    const first = await call("create_linkedin_draft", {
+      text: "Approved LinkedIn post",
+    });
+    await call("publish_linkedin_post", { id: first.id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({
+      author: "urn:li:person:member",
+      commentary: "Approved LinkedIn post",
+      visibility: "PUBLIC",
+    });
+    expect(await call("get_linkedin_post", { id: first.id })).toMatchObject({
+      status: {
+        kind: "published",
+        urn: "urn:li:share:1",
+        permalink: "https://www.linkedin.com/feed/update/urn:li:share:1/",
+      },
+    });
+    const uncertain = await t.run((ctx) =>
+      ctx.db.insert("linkedinPosts", {
+        text: "May already be live",
+        source: "agent",
+        status: {
+          kind: "held",
+          at: Date.now(),
+          heldAt: Date.now(),
+          startedAt: Date.now() - 1000,
+          reason: "unknown",
+          error: "Response lost",
+        },
+      }),
+    );
+    const reviewed = await call("get_linkedin_post", { id: uncertain });
+    expect(reviewed.retryAttempt).toBe(Date.now() - 1000);
+    for (const args of [
+      { id: uncertain },
+      { id: uncertain, confirmDuplicateRisk: false },
+      { id: uncertain, confirmDuplicateRisk: true },
+      {
+        id: uncertain,
+        confirmDuplicateRisk: true,
+        expectedStartedAt: reviewed.retryAttempt - 1,
+      },
+      {
+        id: uncertain,
+        confirmDuplicateRisk: false,
+        expectedStartedAt: reviewed.retryAttempt,
+      },
+    ]) {
+      const denied = await invokeTool("retry_linkedin_post", args);
+      expect(denied.result.isError).toBe(true);
+      expect(denied.result.content[0].text).toContain("duplicate");
+    }
+    expect(
+      (await invokeTool("publish_linkedin_post", { id: uncertain })).result
+        .isError,
+    ).toBe(true);
+    expect(await call("get_linkedin_post", { id: uncertain })).toMatchObject({
+      status: { kind: "held", reason: "unknown" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await call("retry_linkedin_post", {
+      id: uncertain,
+      confirmDuplicateRisk: true,
+      expectedStartedAt: reviewed.retryAttempt,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const scheduled = await call("list_linkedin_posts", { view: "scheduled" });
+    const current = scheduled.items.find(
+      (post: { id: string }) => post.id === uncertain,
+    );
+    expect(current.retryAttempt).toBeGreaterThan(reviewed.retryAttempt);
+    const replayed = await invokeTool("retry_linkedin_post", {
+      id: uncertain,
+      confirmDuplicateRisk: true,
+      expectedStartedAt: reviewed.retryAttempt,
+    });
+    expect(replayed.result.isError).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await call("get_linkedin_post", { id: uncertain })).toMatchObject({
+      retryAttempt: current.retryAttempt,
+      status: { kind: "held", reason: "unknown" },
+    });
+    await call("retry_linkedin_post", {
+      id: uncertain,
+      confirmDuplicateRisk: true,
+      expectedStartedAt: current.retryAttempt,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(await call("get_linkedin_post", { id: uncertain })).toMatchObject({
+      status: { kind: "published" },
+      retryAttempt: null,
+    });
+    const failed = await t.run((ctx) =>
+      ctx.db.insert("linkedinPosts", {
+        text: "Rejected before publishing",
+        source: "agent",
+        status: { kind: "failed", at: Date.now(), error: "Rate limited" },
+      }),
+    );
+    await call("retry_linkedin_post", { id: failed });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(
+      await call("list_linkedin_posts", { view: "published" }),
+    ).toMatchObject({ total: 3 });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
     vi.clearAllMocks();
   }
 });

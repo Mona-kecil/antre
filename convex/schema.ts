@@ -50,6 +50,68 @@ export const queueSettings = {
 };
 
 export default defineSchema({
+  linkedinAccount: defineTable({
+    memberId: v.string(),
+    name: v.string(),
+    accessToken: v.string(),
+    tokenExpiresAt: v.number(),
+    needsReconnect: v.boolean(),
+  }),
+  linkedinSettings: defineTable({
+    ...queueSettings,
+    topics: v.array(v.string()),
+    writingInstructions: v.string(),
+  }),
+  linkedinPosts: defineTable({
+    text: v.string(),
+    topic: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    source: v.union(v.literal("web"), v.literal("agent")),
+    pinned: v.optional(v.boolean()),
+    generation: v.optional(v.number()),
+    lastStartedAt: v.optional(v.number()),
+    status: v.union(
+      v.object({ kind: v.literal("draft") }),
+      v.object({
+        kind: v.literal("queued"),
+        at: v.number(),
+        jobId: v.id("_scheduled_functions"),
+        generation: v.number(),
+      }),
+      v.object({
+        kind: v.literal("publishing"),
+        at: v.number(),
+        startedAt: v.number(),
+        dispatchedAt: v.optional(v.number()),
+      }),
+      v.object({
+        kind: v.literal("published"),
+        at: v.number(),
+        urn: v.string(),
+        permalink: v.string(),
+      }),
+      v.object({
+        kind: v.literal("held"),
+        at: v.number(),
+        heldAt: v.number(),
+        reason: v.literal("auth"),
+        error: v.string(),
+      }),
+      v.object({
+        kind: v.literal("held"),
+        at: v.number(),
+        heldAt: v.number(),
+        reason: v.literal("unknown"),
+        startedAt: v.number(),
+        error: v.string(),
+      }),
+      v.object({
+        kind: v.literal("failed"),
+        at: v.number(),
+        error: v.string(),
+      }),
+    ),
+  }).index("by_kind_at", ["status.kind", "status.at"]),
   replies: defineTable({
     ...replyFields,
     draft: v.optional(v.string()),
