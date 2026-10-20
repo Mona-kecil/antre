@@ -43,7 +43,7 @@
 </nav>
 
 {#each data.items as item (item.id)}
-	<Post parts={item.parts} {username} id="post-{item.id}">
+	<Post parts={item.parts} topicTag={item.topicTag} {username} id="post-{item.id}">
 		{#snippet head()}
 			{#if item.at}<time class="muted" datetime={new Date(item.at).toISOString()}>{ago(item.at, now)}</time>{/if}
 		{/snippet}

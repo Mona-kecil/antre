@@ -319,6 +319,7 @@ export const publish = internalAction({
             text: part.text,
             media_type: part.imageId ? "IMAGE" : "TEXT",
           };
+          if (index === 0 && post.topicTag) params.topic_tag = post.topicTag;
           if (previousId) params.reply_to_id = previousId;
           if (part.imageId) {
             const url = await ctx.storage.getUrl(part.imageId);

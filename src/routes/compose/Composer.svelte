@@ -6,6 +6,7 @@
 	import { dimensions, nameOf, topicColor, type Dimension, type Meta, type TaxonomyEntry } from '#lib/labels.ts';
 	import { toast } from '#lib/toast.svelte.ts';
 	import { localInput, when } from '#lib/time.ts';
+	import { DEFAULT_TOPIC_TAG, MAX_TOPIC_TAG_LENGTH, topicTagSchema } from '#lib/topicTag.ts';
 	import Icon from '#lib/components/Icon.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
 
@@ -15,7 +16,7 @@
 		nextSlot,
 		username
 	}: {
-		edit: { id: string; failed: boolean; parts: Part[]; meta: Meta } | null;
+		edit: { id: string; failed: boolean; parts: Part[]; meta: Meta; topicTag: string; topicTagLocked: boolean } | null;
 		nextSlot: number | null;
 		username: string;
 	} = $props();
@@ -23,10 +24,11 @@
 	const MAX = 500;
 	// The page keys this component by draft id, so the first value is the only one.
 	const seed = untrack(() => edit);
-	const initial = JSON.stringify(seed ? { parts: seed.parts, meta: seed.meta } : null);
+	const initial = JSON.stringify(seed ? { parts: seed.parts, meta: seed.meta, topicTag: seed.topicTag } : null);
 	let id = $state(seed?.id ?? '');
 	let parts = $state<Part[]>(seed ? seed.parts.map((part) => ({ ...part })) : [{ text: '' }]);
 	let meta = $state<Meta>({ ...(seed?.meta ?? {}) });
+	let topicTag = $state(seed ? seed.topicTag : DEFAULT_TOPIC_TAG);
 	let busy = $state(false);
 	let saved = $state(false);
 	let when_ = $state(false);
@@ -36,13 +38,15 @@
 	const taxonomy = $derived((page.data.taxonomy ?? []) as TaxonomyEntry[]);
 	const length = (text: string) => [...text].length;
 	const uploading = $derived(parts.some((part) => part.uploading));
+	const topicTagResult = $derived(topicTagSchema.safeParse(topicTag));
+	const topicTagError = $derived(topicTagResult.success ? null : topicTagResult.error.issues[0].message);
 	const invalid = $derived(
-		parts.some((part) => !part.text.trim() || length(part.text) > MAX) || uploading
+		parts.some((part) => !part.text.trim() || length(part.text) > MAX) || uploading || !topicTagResult.success
 	);
 	const dirty = $derived(
 		seed
-			? JSON.stringify({ parts: parts.map(strip), meta }) !== initial
-			: parts.some((part) => part.text.trim() || part.imageId) || Object.keys(meta).length > 0
+			? JSON.stringify({ parts: parts.map(strip), meta, topicTag }) !== initial
+			: parts.some((part) => part.text.trim() || part.imageId) || Object.keys(meta).length > 0 || topicTag !== DEFAULT_TOPIC_TAG
 	);
 	const now = Date.now();
 
@@ -217,6 +221,26 @@
 		</button>
 	</div>
 
+	<div class="topic-tag">
+		<label class="label" for="topic-tag">Threads topic <span class="muted">· optional</span></label>
+		<input
+			id="topic-tag"
+			class="field"
+			name="topicTag"
+			bind:value={topicTag}
+			placeholder="e.g. Marketing"
+			readonly={seed?.topicTagLocked}
+			aria-invalid={!!topicTagError}
+			aria-describedby="topic-tag-hint"
+		/>
+		<div class="topic-tag-info">
+			<p id="topic-tag-hint" class:error={!!topicTagError}>
+				{topicTagError ?? (seed?.topicTagLocked ? 'Already published with the first post.' : 'Shown with your first post on Threads. Leave blank for no tag.')}
+			</p>
+			<span class="num">{length(topicTag.trim())}/{MAX_TOPIC_TAG_LENGTH}</span>
+		</div>
+	</div>
+
 	<section class="meta" aria-label="Labels and notes">
 		<div class="pills">
 			{#each dimensions as dimension}
@@ -327,6 +351,28 @@
 </Sheet>
 
 <style>
+	.topic-tag {
+		padding: 12px 16px 16px;
+	}
+
+	.topic-tag-info {
+		display: flex;
+		justify-content: space-between;
+		gap: 12px;
+		margin-top: 6px;
+		font-size: 12px;
+		line-height: 16px;
+		color: var(--fg-2);
+	}
+
+	.topic-tag-info .num {
+		flex-shrink: 0;
+	}
+
+	.topic-tag-info .error {
+		color: var(--red);
+	}
+
 	.composer {
 		display: flex;
 		flex-direction: column;

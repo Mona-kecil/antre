@@ -87,11 +87,15 @@ async function setup() {
       }
       if (method === "GET" && path === "me") {
         expect(params.get("fields")).toBe("id");
-        if (verificationError === "network") throw new Error("Connection reset");
+        if (verificationError === "network")
+          throw new Error("Connection reset");
         if (verificationError !== undefined)
           return Response.json(
             {
-              error: { message: "Verification rejected", code: verificationError },
+              error: {
+                message: "Verification rejected",
+                code: verificationError,
+              },
             },
             { status: 400 },
           );
@@ -325,6 +329,189 @@ test("validates stored images when creating and updating drafts and returns imag
     }),
   ).rejects.toThrow("Image not found");
   expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(1);
+});
+
+test("defaults to Marketing and publishes a chosen topic only on the first part", async () => {
+  const { t, fake } = await setup();
+  const imageId = await t.run((ctx) =>
+    storeTestImage(ctx, new Blob(["image"], { type: "image/png" })),
+  );
+  for (const [index, topicTag] of [
+    undefined,
+    "  Digital Marketing  ",
+    "",
+  ].entries()) {
+    const expected = topicTag === undefined ? "Marketing" : topicTag.trim();
+    const text = `tagged root ${index}`;
+    const id = await t.mutation(api.posts.createDraft, {
+      secret,
+      source: "agent",
+      parts: [
+        { text, ...(index === 1 ? { imageId } : {}) },
+        { text: `tagged reply ${index}` },
+      ],
+      ...(topicTag === undefined ? {} : { topicTag }),
+      meta: { topic: "T01" },
+    });
+    const { posts } = await t.query(api.posts.getPosts, { secret, ids: [id] });
+    expect(posts[0]?.topicTag).toBe(expected || undefined);
+    expect(posts[0]?.meta.topic).toBe("T01");
+    await t.mutation(api.posts.queue, { secret, id, at: Date.now() + 1_000 });
+    const plan = await t.query(api.posts.schedule, {
+      secret,
+      from: Date.now(),
+      day: Date.now(),
+      days: 1,
+    });
+    expect(plan.posts.find((post) => post.id === id)?.topicTag).toBe(
+      expected || undefined,
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const request = fake.requests.find(
+      ({ method, path, params }) =>
+        method === "POST" &&
+        path === "user/threads" &&
+        params.get("text") === text,
+    );
+    expect(request?.params.get("topic_tag")).toBe(expected || null);
+    expect(request?.params.get("media_type")).toBe(
+      index === 1 ? "IMAGE" : "TEXT",
+    );
+    const reply = fake.requests.find(
+      ({ method, path, params }) =>
+        method === "POST" &&
+        path === "user/threads" &&
+        params.get("text") === `tagged reply ${index}`,
+    );
+    expect(reply?.params.get("topic_tag")).toBeNull();
+    expect(
+      (
+        await t.query(api.library.page, { secret, view: "published" })
+      ).items.find((post) => post.id === id)?.topicTag,
+    ).toBe(expected || undefined);
+    expect(
+      (await t.query(api.library.searchPosts, { secret, text })).find(
+        (post) => post.id === id,
+      )?.topicTag,
+    ).toBe(expected || undefined);
+  }
+});
+
+test("validates, preserves and clears the public topic independently of internal labels", async () => {
+  const { t } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "web",
+    parts: [{ text: "topic edits" }],
+    meta: { topic: "T15" },
+  });
+  const read = async () =>
+    (await t.query(api.posts.getPosts, { secret, ids: [id] })).posts[0];
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    meta: { topic: "T06" },
+  });
+  expect((await read())?.topicTag).toBe("Marketing");
+  for (const topicTag of ["a".repeat(51), "Ads & sales", "Meta.ads"]) {
+    await expect(
+      t.mutation(api.posts.createDraft, {
+        secret,
+        source: "agent",
+        parts: [{ text: "invalid topic" }],
+        topicTag,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      t.mutation(api.posts.updateDraft, { secret, id, topicTag }),
+    ).rejects.toThrow();
+  }
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    topicTag: "😀".repeat(50),
+  });
+  expect((await read())?.topicTag).toBe("😀".repeat(50));
+  await t.mutation(api.posts.updateDraft, { secret, id, topicTag: "   " });
+  expect((await read())?.topicTag).toBeUndefined();
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    parts: [{ text: "new text" }],
+  });
+  expect((await read())?.topicTag).toBeUndefined();
+  expect((await read())?.meta.topic).toBe("T06");
+});
+
+test("sets topics atomically on drafts and queued posts without moving their slots", async () => {
+  const { t } = await setup();
+  const ids = await Promise.all(
+    ["draft", "queued", "published"].map((text) =>
+      t.mutation(api.posts.createDraft, {
+        secret,
+        source: "agent",
+        parts: [{ text }],
+      }),
+    ),
+  );
+  const at = await t.mutation(api.posts.queue, { secret, id: ids[1] });
+  expect(
+    await t.mutation(api.posts.setTopicTag, {
+      secret,
+      ids: [ids[0], ids[1], ids[0]],
+      topicTag: "  Ecommerce  ",
+    }),
+  ).toEqual({ updated: 2 });
+  const read = async () =>
+    (await t.query(api.posts.getPosts, { secret, ids })).posts;
+  expect((await read()).slice(0, 2).map((post) => post?.topicTag)).toEqual([
+    "Ecommerce",
+    "Ecommerce",
+  ]);
+  expect((await read())[1]?.at).toBe(at);
+  await t.run((ctx) =>
+    ctx.db.patch(ids[2], {
+      publishedIds: ["already-live"],
+      status: { kind: "failed", at: Date.now(), error: "reply failed" },
+    }),
+  );
+  await expect(
+    t.mutation(api.posts.setTopicTag, { secret, ids, topicTag: "Different" }),
+  ).rejects.toThrow("before publishing");
+  expect((await read()).slice(0, 2).map((post) => post?.topicTag)).toEqual([
+    "Ecommerce",
+    "Ecommerce",
+  ]);
+  await expect(
+    t.mutation(api.posts.updateDraft, {
+      secret,
+      id: ids[2],
+      topicTag: "Different",
+    }),
+  ).rejects.toThrow("published first post");
+  await expect(
+    t.mutation(api.posts.setTopicTag, {
+      secret,
+      ids: [],
+      topicTag: "Marketing",
+    }),
+  ).rejects.toThrow("1 and 100");
+  await expect(
+    t.mutation(api.posts.setTopicTag, {
+      secret,
+      ids: [ids[0]],
+      topicTag: "A&B",
+    }),
+  ).rejects.toThrow("ampersands");
+  await t.mutation(api.posts.setTopicTag, {
+    secret,
+    ids: [ids[0], ids[1]],
+    topicTag: "",
+  });
+  expect((await read()).slice(0, 2).map((post) => post?.topicTag)).toEqual([
+    undefined,
+    undefined,
+  ]);
 });
 
 test("queues consecutive WIB slots, spills after noon, and publishes each scheduled post", async () => {

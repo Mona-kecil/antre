@@ -141,6 +141,79 @@ test("MCP uploads base64 to Convex storage, attaches the image, and rejects inva
   }
 });
 
+test("MCP creates, changes, batches and clears public topic tags independently of taxonomy", async () => {
+  vi.stubEnv("ANTRE_SECRET", "test-secret");
+  const t = convexTest(schema, modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.mutation.mockImplementation(t.mutation);
+  try {
+    const created = await invokeTool("create_draft", {
+      parts: [{ text: "Public topic via MCP" }],
+      meta: { topic: "T15" },
+    });
+    expect(created.result.isError).not.toBe(true);
+    const { id } = JSON.parse(created.result.content[0].text);
+    const read = async () => {
+      const response = await invokeTool("get_posts", { ids: [id] });
+      expect(response.result.isError).not.toBe(true);
+      return JSON.parse(response.result.content[0].text)[0];
+    };
+    expect(await read()).toMatchObject({
+      topicTag: "Marketing",
+      meta: { topic: "T15" },
+    });
+    const edited = await invokeTool("update_draft", {
+      id,
+      topicTag: "  Ecommerce  ",
+    });
+    expect(edited.result.isError).not.toBe(true);
+    expect((await read()).topicTag).toBe("Ecommerce");
+    await invokeTool("update_draft", { id, parts: [{ text: "Edited text" }] });
+    expect((await read()).topicTag).toBe("Ecommerce");
+    const queued = await invokeTool("queue", { id });
+    expect(queued.result.isError).not.toBe(true);
+    const originalAt = (await read()).at;
+    const set = await invokeTool("set_topic_tag", {
+      ids: [id],
+      topicTag: "Marketing",
+    });
+    expect(set.result.isError).not.toBe(true);
+    expect(JSON.parse(set.result.content[0].text)).toEqual({ updated: 1 });
+    expect(await read()).toMatchObject({
+      topicTag: "Marketing",
+      at: originalAt,
+      meta: { topic: "T15" },
+    });
+    const cleared = await invokeTool("set_topic_tag", {
+      ids: [id],
+      topicTag: "",
+    });
+    expect(cleared.result.isError).not.toBe(true);
+    expect((await read()).topicTag).toBeUndefined();
+    for (const topicTag of ["A&B", "Meta.ads", "a".repeat(51)]) {
+      const invalid = await invokeTool("set_topic_tag", {
+        ids: [id],
+        topicTag,
+      });
+      expect(invalid.result.isError).toBe(true);
+    }
+    const noTag = await invokeTool("create_draft", {
+      parts: [{ text: "No tag" }],
+      topicTag: "",
+    });
+    expect(noTag.result.isError).not.toBe(true);
+    const { id: noTagId } = JSON.parse(noTag.result.content[0].text);
+    const result = await t.query(api.posts.getPosts, {
+      secret: "test-secret",
+      ids: [noTagId],
+    });
+    expect(result.posts[0]?.topicTag).toBeUndefined();
+  } finally {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
+
 test("MCP rejects missing or wrong bearer tokens, then initializes and lists annotated board, schedule and lookup tools", async () => {
   const call = (method: string, token?: string) =>
     POST({
@@ -196,6 +269,7 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
     "get_posts",
     "create_draft",
     "update_draft",
+    "set_topic_tag",
     "queue",
     "reschedule",
     "swap",

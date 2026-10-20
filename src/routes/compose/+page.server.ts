@@ -5,6 +5,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { convex } from "#lib/server/convex.ts";
 import { owner, reason, requireOwner } from "#lib/server/owner.ts";
 import { dayStart, isoDay, parseLocal, when } from "#lib/time.ts";
+import { topicTagSchema } from "#lib/topicTag.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
 const partsSchema = z
@@ -28,7 +29,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const today = dayStart(Date.now());
   const [lookup, schedule] = await Promise.all([
     editId ? client.query(api.posts.getPosts, { secret, ids: [editId] }) : null,
-    client.query(api.posts.schedule, { secret, from: today, days: 1, day: today }),
+    client.query(api.posts.schedule, {
+      secret,
+      from: today,
+      days: 1,
+      day: today,
+    }),
   ]);
   requireOwner(locals.userId, schedule.account);
   const post = lookup?.posts.find(
@@ -44,6 +50,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       ? {
           id: post.id,
           failed: post.status.kind === "failed",
+          topicTag: post.topicTag ?? "",
+          topicTagLocked: post.publishedIds.length > 0,
           parts: post.parts.map((part) => ({
             text: part.text,
             imageId: part.imageId,
@@ -66,9 +74,14 @@ export const actions: Actions = {
     const parts = partsSchema.safeParse(
       JSON.parse(String(form.get("parts") ?? "null")),
     );
+    const topicTag = topicTagSchema
+      .optional()
+      .safeParse(form.get("topicTag") ?? undefined);
     if (!mode.success) return fail(400, { error: "Unknown compose action" });
     if (!parts.success)
       return fail(400, { error: "Every part needs 1–500 characters." });
+    if (!topicTag.success)
+      return fail(400, { error: topicTag.error.issues[0].message });
     let at: number | undefined;
     if (mode.data === "schedule") {
       at = parseLocal(String(form.get("at") ?? "")) ?? undefined;
@@ -82,25 +95,28 @@ export const actions: Actions = {
       }),
     );
     let id = (String(form.get("id") ?? "") || undefined) as
-      | Id<"posts">
-      | undefined;
+      Id<"posts"> | undefined;
     try {
       if (id)
         await client.mutation(api.posts.updateDraft, {
           secret,
           id,
           parts: parts.data,
+          ...(topicTag.data === undefined ? {} : { topicTag: topicTag.data }),
           meta,
         });
       else
         id = await client.mutation(api.posts.createDraft, {
           secret,
           parts: parts.data,
+          ...(topicTag.data === undefined ? {} : { topicTag: topicTag.data }),
           meta,
           source: "web",
         });
     } catch (cause) {
-      return fail(400, { error: reason(cause, "Couldn't save this post. Try again.") });
+      return fail(400, {
+        error: reason(cause, "Couldn't save this post. Try again."),
+      });
     }
     try {
       if (mode.data === "queue" || mode.data === "schedule") {

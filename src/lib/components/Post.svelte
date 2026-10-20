@@ -4,6 +4,7 @@
 	type Part = { text: string; imageUrl?: string | null };
 	let {
 		parts,
+		topicTag,
 		username,
 		head,
 		sub,
@@ -12,6 +13,7 @@
 		id
 	}: {
 		parts: Part[];
+		topicTag?: string;
 		username: string;
 		head?: Snippet;
 		sub?: Snippet;
@@ -37,6 +39,7 @@
 						<strong>{username}</strong>
 						{@render head?.()}
 					</div>
+					{#if topicTag}<p class="topic-tag"><span class="sr-only">Threads topic: </span>{topicTag}</p>{/if}
 					{#if sub}<div class="sub">{@render sub()}</div>{/if}
 				{/if}
 				{#if parts.length > 1}
@@ -138,6 +141,13 @@
 
 	.sub {
 		margin-top: 2px;
+	}
+
+	.topic-tag {
+		margin-top: 2px;
+		font-size: 13px;
+		line-height: 18px;
+		color: var(--fg-2);
 	}
 
 	.index {

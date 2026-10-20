@@ -6,6 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { convex } from "#lib/server/convex.ts";
 import { dayStart, wib } from "#lib/time.ts";
+import { topicTagSchema } from "#lib/topicTag.ts";
 import { IMAGE_TYPES } from "../../../convex/lib/media";
 import { decodeImage, downloadImage, MAX_IMAGE_BASE64_LENGTH } from "./images";
 import type { RequestHandler } from "./$types";
@@ -228,14 +229,23 @@ const handler = createMcpHandler(
         annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Create a Threads draft. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
-        inputSchema: z.object({ parts, meta }),
+        inputSchema: z.object({
+          parts,
+          meta,
+          topicTag: topicTagSchema
+            .optional()
+            .describe(
+              'Public Threads topic for the first post. Defaults to Marketing; pass "" for no tag. Separate from meta.topic, which is an internal label.',
+            ),
+        }),
       },
-      async ({ parts, meta }) => {
+      async ({ parts, meta, topicTag }) => {
         const { client, secret } = convex();
         return result({
           id: await client.mutation(api.posts.createDraft, {
             secret,
             parts,
+            ...(topicTag === undefined ? {} : { topicTag }),
             ...(meta === undefined ? {} : { meta }),
             source: "agent",
           }),
@@ -248,17 +258,53 @@ const handler = createMcpHandler(
         annotations: { destructiveHint: false, openWorldHint: false },
         description:
           "Edit a draft or the unpublished parts of a failed post. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
-        inputSchema: z.object({ id, parts: parts.optional(), meta }),
+        inputSchema: z.object({
+          id,
+          parts: parts.optional(),
+          meta,
+          topicTag: topicTagSchema
+            .optional()
+            .describe(
+              'Public Threads topic for the first post. Omit to keep it, or pass "" to remove it. Cannot change after the first post is published. Separate from the internal meta.topic label.',
+            ),
+        }),
       },
-      async ({ id, parts, meta }) => {
+      async ({ id, parts, meta, topicTag }) => {
         const { client, secret } = convex();
         return result(
           await client.mutation(api.posts.updateDraft, {
             secret,
             id,
             ...(parts === undefined ? {} : { parts }),
+            ...(topicTag === undefined ? {} : { topicTag }),
             ...(meta === undefined ? {} : { meta }),
             source: "agent",
+          }),
+        );
+      },
+    );
+    server.registerTool(
+      "set_topic_tag",
+      {
+        annotations: {
+          destructiveHint: false,
+          openWorldHint: false,
+          idempotentHint: true,
+        },
+        description:
+          'Set the public Threads topic on 1–100 drafts, queued, held, or failed posts as one batch. Use topicTag="Marketing" or another topic; use "" to remove it. Rejects the whole batch if any post is publishing or has a published first part. Does not change the internal meta.topic label or the schedule.',
+        inputSchema: z.object({
+          ids: z.array(id).min(1).max(100),
+          topicTag: topicTagSchema,
+        }),
+      },
+      async ({ ids, topicTag }) => {
+        const { client, secret } = convex();
+        return result(
+          await client.mutation(api.posts.setTopicTag, {
+            secret,
+            ids,
+            topicTag,
           }),
         );
       },

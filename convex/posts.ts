@@ -22,6 +22,7 @@ import {
 import { withSecret } from "./auth";
 import { partsWithImages, validateImage } from "./lib/media";
 import { meta, part, queueSettings } from "./schema";
+import { DEFAULT_TOPIC_TAG, topicTagSchema } from "../src/lib/topicTag";
 import {
   accountState,
   compactAfter,
@@ -58,13 +59,16 @@ export const createDraft = mutation(
   withSecret(
     {
       parts: v.array(part),
+      topicTag: v.optional(v.string()),
       meta: v.optional(meta),
       source: v.union(v.literal("web"), v.literal("agent")),
     },
     async (ctx: MutationCtx, args) => {
       await validateParts(ctx, args.parts);
+      const topicTag = topicTagSchema.parse(args.topicTag ?? DEFAULT_TOPIC_TAG);
       return await insertPost(ctx, {
         parts: args.parts,
+        ...(topicTag ? { topicTag } : {}),
         meta: args.meta,
         source: args.source,
         publishedIds: [],
@@ -80,6 +84,7 @@ export const updateDraft = mutation(
       id: v.id("posts"),
       source,
       parts: v.optional(v.array(part)),
+      topicTag: v.optional(v.string()),
       meta: v.optional(meta),
     },
     async (ctx: MutationCtx, args) => {
@@ -101,11 +106,46 @@ export const updateDraft = mutation(
           }
         }
       }
+      const topicTag =
+        args.topicTag === undefined
+          ? post.topicTag
+          : topicTagSchema.parse(args.topicTag) || undefined;
+      if (post.publishedIds.length > 0 && topicTag !== post.topicTag)
+        throw new Error(
+          "The topic of a published first post cannot be changed",
+        );
       await patchPost(ctx, args.id, {
+        ...(args.topicTag === undefined ? {} : { topicTag }),
         ...(args.parts === undefined ? {} : { parts: args.parts }),
         ...(args.source === undefined ? {} : { source: args.source }),
         ...(args.meta === undefined ? {} : { meta: args.meta }),
       });
+    },
+  ),
+);
+
+export const setTopicTag = mutation(
+  withSecret(
+    { ids: v.array(v.id("posts")), topicTag: v.string() },
+    async (ctx: MutationCtx, { ids, topicTag }) => {
+      if (ids.length < 1 || ids.length > 100)
+        throw new Error("Use between 1 and 100 post ids");
+      const tag = topicTagSchema.parse(topicTag) || undefined;
+      const uniqueIds = new Set(ids);
+      for (const id of uniqueIds) {
+        const post = await ctx.db.get(id);
+        if (!post) throw new Error("Post not found");
+        if (
+          post.status.kind === "publishing" ||
+          post.status.kind === "published" ||
+          post.publishedIds.length > 0
+        )
+          throw new Error(
+            "The Threads topic can only be set before publishing",
+          );
+        await patchPost(ctx, id, { topicTag: tag });
+      }
+      return { updated: uniqueIds.size };
     },
   ),
 );
@@ -354,6 +394,7 @@ export const schedule = query(
           at: post.status.kind === "draft" ? 0 : post.status.at,
           pinned: post.pinned ?? post.status.kind === "queued",
           parts: await partsWithImages(ctx, post.parts),
+          topicTag: post.topicTag,
           meta: post.meta ?? {},
           source: post.source,
           metrics: post.metrics ?? null,

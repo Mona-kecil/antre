@@ -69,6 +69,7 @@ export default defineSchema({
     libraryIndexed: v.optional(v.literal(true)),
     rootPublishedId: v.optional(v.string()),
     parts: v.array(part),
+    topicTag: v.optional(v.string()),
     publishedIds: v.array(v.string()),
     pinned: v.optional(v.boolean()),
     scheduleGeneration: v.optional(v.number()),

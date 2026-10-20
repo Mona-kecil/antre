@@ -199,6 +199,7 @@ export const searchPosts = query(
             status: post.status.kind,
             date: new Date(date(post)).toISOString(),
             text: post.parts[0]?.text ?? "",
+            topicTag: post.topicTag,
             ...(args.fullParts
               ? { parts: await partsWithImages(ctx, post.parts) }
               : {}),
@@ -361,6 +362,7 @@ export const page = query(
           pinned: post.pinned ?? post.status.kind === "queued",
           held: post.status.kind === "held",
           parts: await partsWithImages(ctx, post.parts),
+          topicTag: post.topicTag,
           meta: post.meta ?? {},
           source: post.source,
           metrics: audienceMetrics(post),

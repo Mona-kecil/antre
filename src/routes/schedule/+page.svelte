@@ -178,7 +178,7 @@
 
 {#each shown as post (post.id)}
 	{@const kind = post.status.kind}
-	<Post parts={post.parts} {username} id="post-{post.id}" selected={post.id === selected}>
+		<Post parts={post.parts} topicTag={post.topicTag} {username} id="post-{post.id}" selected={post.id === selected}>
 		{#snippet head()}
 			<time class="time num" datetime={new Date(post.at).toISOString()}>{clock(post.at)}</time>
 			{#if kind === 'queued' && post.pinned}<Flag icon="pin" tone="indigo" text="Pinned" />{/if}

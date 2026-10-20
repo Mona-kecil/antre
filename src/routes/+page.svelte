@@ -52,7 +52,7 @@
 
 {#each data.items as item (item.id)}
 	{@const failed = item.status.kind === 'failed' ? item.status : null}
-	<Post parts={item.parts} {username} id="post-{item.id}">
+		<Post parts={item.parts} topicTag={item.topicTag} {username} id="post-{item.id}">
 		{#snippet head()}
 			<time class="muted" datetime={new Date(item._creationTime).toISOString()}>{ago(item._creationTime, now)}</time>
 			{#if item.source === 'agent'}<span class="muted">· agent</span>{/if}

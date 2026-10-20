@@ -20,14 +20,17 @@ The first automatic queue operation creates the single settings row: `Asia/Jakar
 
 ## Backend API
 
-Public mutations in `convex/posts.ts`: `createDraft`, `updateDraft`, `queue`, `unqueue`, `publishNow`, `retry`, `deletePost`. Public query: `listQueue`. Every call takes `secret`.
+Public mutations in `convex/posts.ts`: `createDraft`, `updateDraft`, `setTopicTag`, `queue`, `unqueue`, `publishNow`, `retry`, `deletePost`. Public query: `listQueue`. Every call takes `secret`.
 
-- `createDraft` takes `parts`, optional `meta`, and `source` (`web` or `agent`). Each part needs 1–500 Unicode code points and may reference a stored image.
-- `updateDraft` takes `id` and optional `parts`/`meta`. Drafts and failed posts can be edited. Parts whose IDs have been saved cannot be changed or removed.
+- `createDraft` takes `parts`, optional `meta` and `topicTag`, and `source` (`web` or `agent`). Each part needs 1–500 Unicode code points and may reference a stored image. `topicTag` defaults to `Marketing`. An empty string creates a draft without a tag.
+- `updateDraft` takes `id` and optional `parts`, `meta`, and `topicTag`. Drafts and failed posts can be edited. An omitted `topicTag` keeps the current tag. An empty string removes it. Parts whose IDs have been saved cannot be changed or removed. The topic cannot change after the first part's ID is saved.
+- `setTopicTag` takes `ids` (1–100 post IDs) and `topicTag`. It updates drafts, queued, held, or failed posts in one transaction without moving their schedule. It rejects the batch if any post is publishing or has a published first part. The MCP tool is `set_topic_tag`, with the same arguments.
 - `queue` takes `id` and optional `at`, returning the reserved timestamp. Drafts and failed posts can be queued. Queued, publishing, and published posts hold their times.
 - `unqueue` takes a queued `id`, cancels its job, and returns it to drafts. `deletePost` cancels a queued job and removes the local record; publishing posts cannot be deleted. It does not delete content from Threads.
 - `publishNow` starts a draft, queued, or failed post at the current time. `retry` starts a failed post at the current time. Both keep saved part IDs.
 - `listQueue` returns posts sorted by queue time (creation time for drafts). Optional `days` limits scheduled times to that many days ahead; drafts and history remain visible. It never returns account tokens.
+
+The composer and MCP tools `create_draft` and `update_draft` expose `topicTag` as the public Threads topic. A tag has 1–50 Unicode code points and cannot contain a period or ampersand. The publisher sends it as `topic_tag` on the first part only. The internal `meta.topic` label remains separate.
 
 Queuing and scheduling share one mutation. The internal `fire` mutation starts publishing only from `queued`. The action saves each part ID before sending the next reply and reads the first part's permalink at completion. Errors preserve progress. Error 190 flags the account for reconnecting. An attempt timestamp stops an action from overwriting a later retry's state.
 
