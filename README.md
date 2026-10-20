@@ -1,6 +1,6 @@
 # antre
 
-A queue and publisher for one Threads account. SvelteKit 3 serves the default page. Convex stores drafts, reserves queue slots, and publishes reply chains. UI, OAuth, and MCP are deferred. The spec is in [docs/prd.md](docs/prd.md).
+A review console and publisher for one Threads account and one personal LinkedIn profile. SvelteKit 3 serves the UI. Convex stores drafts, reserves queue slots, and runs publishing jobs. The original Threads spec is in [docs/prd.md](docs/prd.md).
 
 ## Develop
 
@@ -14,13 +14,29 @@ The project uses `@sveltejs/adapter-vercel`. `npm run build` creates a local bui
 
 Convex configuration writes `.env.local`, which is gitignored. Set `ANTRE_SECRET` in the Convex deployment and in the server environment that calls Convex. Never expose it through a `PUBLIC_` variable. All public functions require this secret; internal functions do not.
 
-Until OAuth is added, insert the single `account` row through the Convex dashboard: `threadsUserId`, `username`, `accessToken`, `tokenExpiresAt` (Unix milliseconds), and `needsReconnect: false`. Keep tokens out of source control and command history. No real Threads credentials are needed for tests.
+Set the server variables listed in [.env.example](.env.example). Connect the owner through Threads OAuth at `/login`. No real platform credentials are needed for tests.
 
-The first automatic queue operation creates the single settings row: `Asia/Jakarta`, `06:00`, `12:00`, interval `30`. Change that row through the dashboard to retune the window. The end time is inclusive. Explicit queue times use Unix milliseconds and may fall outside that window.
+## Connect LinkedIn
+
+1. Create a LinkedIn developer app. Enable **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`.
+2. Register `https://antre-hazel.vercel.app/auth/linkedin/callback` as an authorized redirect URL. The public privacy page is `https://antre-hazel.vercel.app/privacy`.
+3. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI` in Vercel's production environment. Keep the secret in the server environment. Rotate it there when the app secret changes.
+4. Deploy the Convex functions before deploying the web app. The schema adds LinkedIn tables without changing existing Threads documents or jobs.
+5. Log in as the Threads owner, switch to **LinkedIn**, and open **Settings → Connect LinkedIn**. Approve access to the personal profile you want to publish from.
+
+LinkedIn has separate drafts, topics, writing preferences, posting windows, and a library. Topics are internal labels. They are not sent as hashtags. The default schedule has one slot at 08:00 WIB each day. Change it in LinkedIn settings.
+
+The first release publishes one text body of 1–3,000 Unicode code points. Posts remain drafts until queued or published by the owner or an authorized MCP caller. Public reads omit access tokens. Expired access holds LinkedIn posts until the same profile reconnects.
+
+A timeout, server error, or missing publish ID can leave the result unknown. These posts appear as held in Schedule and never resend on reconnect. Check your LinkedIn profile before retrying. The UI requires confirmation, and the MCP retry tool requires `confirmDuplicateRisk: true` plus the current `retryAttempt` as `expectedStartedAt`. Consent for an older attempt is rejected.
+
+The agent uses the `*_linkedin_*` MCP tools and reads `get_linkedin_settings` for this channel's topics and writing preferences. The existing tools keep their Threads behavior. LinkedIn replies, media uploads, imported history, and engagement metrics are outside this release.
 
 ## Backend API
 
 Public mutations in `convex/posts.ts`: `createDraft`, `updateDraft`, `setTopicTag`, `queue`, `unqueue`, `publishNow`, `retry`, `deletePost`. Public query: `listQueue`. Every call takes `secret`.
+
+Threads defaults to a `06:00`–`12:00` window in `Asia/Jakarta`, with a `30` minute interval. Change the window in Threads settings. The end time is inclusive. Explicit queue times use Unix milliseconds and may fall outside that window.
 
 - `createDraft` takes `parts`, optional `meta` and `topicTag`, and `source` (`web` or `agent`). Each part needs 1–500 Unicode code points and may reference a stored image. `topicTag` defaults to `Marketing`. An empty string creates a draft without a tag.
 - `updateDraft` takes `id` and optional `parts`, `meta`, and `topicTag`. Drafts and failed posts can be edited. An omitted `topicTag` keeps the current tag. An empty string removes it. Parts whose IDs have been saved cannot be changed or removed. The topic cannot change after the first part's ID is saved.
