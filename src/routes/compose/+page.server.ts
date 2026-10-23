@@ -89,10 +89,9 @@ export const actions: Actions = {
         return fail(400, { error: "Choose a time in the future (WIB)." });
     }
     const meta = Object.fromEntries(
-      metaKeys.flatMap((key) => {
-        const value = String(form.get(key) ?? "").trim();
-        return value ? [[key, value]] : [];
-      }),
+      metaKeys
+        .filter((key) => form.has(key))
+        .map((key) => [key, String(form.get(key) ?? "").trim()]),
     );
     let id = (String(form.get("id") ?? "") || undefined) as
       Id<"posts"> | undefined;
@@ -110,7 +109,9 @@ export const actions: Actions = {
           secret,
           parts: parts.data,
           ...(topicTag.data === undefined ? {} : { topicTag: topicTag.data }),
-          meta,
+          meta: Object.fromEntries(
+            Object.entries(meta).filter(([, value]) => value !== ""),
+          ),
           source: "web",
         });
     } catch (cause) {

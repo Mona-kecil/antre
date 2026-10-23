@@ -105,6 +105,78 @@ test("LinkedIn starts with one daily slot and shares its text parser with caller
   );
 });
 
+test.each(["draft", "failed"] as const)(
+  "editing a %s LinkedIn post preserves omitted topic and notes",
+  async (kind) => {
+    const { t, get } = await setup();
+    const id = await t.mutation(api.linkedin.createDraft, {
+      secret,
+      source: "agent",
+      text: "Original text",
+      topic: "Engineering",
+      notes: "Keep the example",
+    });
+    if (kind === "failed")
+      await t.run((ctx) =>
+        ctx.db.patch(id, {
+          status: { kind: "failed", at: Date.now(), error: "Rejected" },
+        }),
+      );
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Revised text",
+    });
+    expect(await get(id)).toMatchObject({
+      text: "Revised text",
+      topic: "Engineering",
+      notes: "Keep the example",
+      status: { kind },
+    });
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Topic edit",
+      topic: " Writing ",
+    });
+    expect(await get(id)).toMatchObject({
+      topic: "Writing",
+      notes: "Keep the example",
+    });
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Notes edit",
+      notes: " New example ",
+    });
+    expect(await get(id)).toMatchObject({
+      topic: "Writing",
+      notes: "New example",
+    });
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Clear topic",
+      topic: " ",
+    });
+    expect(await get(id)).not.toHaveProperty("topic");
+    expect(await get(id)).toMatchObject({ notes: "New example" });
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Clear notes",
+      notes: "",
+    });
+    await t.mutation(api.linkedin.updateDraft, {
+      secret,
+      id,
+      text: "Still unlabelled",
+    });
+    expect(await get(id)).not.toHaveProperty("topic");
+    expect(await get(id)).not.toHaveProperty("notes");
+  },
+);
+
 test("draft validation, editing, list counts and settings stay inside LinkedIn", async () => {
   const { t, draft, get } = await setup();
   await expect(draft(" ")).rejects.toThrow("1–3000");

@@ -68,14 +68,30 @@ test("the composer saves, reloads and clears a public topic and rejects invalid 
         locals: { userId: "owner" },
       } as Parameters<typeof load>[0]);
     expect(await open()).toMatchObject({
-      edit: { topicTag: "Marketing", topicTagLocked: false },
+      edit: {
+        topicTag: "Marketing",
+        topicTagLocked: false,
+        meta: { topic: "T15" },
+      },
     });
     expect(
       await save({ id: draft._id, topicTag: "  Ecommerce  " }),
     ).toMatchObject({ message: "Draft saved" });
     expect(await open()).toMatchObject({ edit: { topicTag: "Ecommerce" } });
     await save({ id: draft._id });
-    expect(await open()).toMatchObject({ edit: { topicTag: "Ecommerce" } });
+    expect(await open()).toMatchObject({
+      edit: { topicTag: "Ecommerce", meta: { topic: "T15" } },
+    });
+    await save({ id: draft._id, notes: "New notes" });
+    expect(await open()).toMatchObject({
+      edit: { meta: { topic: "T15", notes: "New notes" } },
+    });
+    await save({ id: draft._id, topic: "" });
+    expect(await open()).toMatchObject({
+      edit: { meta: { notes: "New notes" } },
+    });
+    const cleared = await open();
+    expect(cleared?.edit?.meta).not.toHaveProperty("topic");
     await save({ id: draft._id, topicTag: "" });
     expect(await open()).toMatchObject({ edit: { topicTag: "" } });
   } finally {

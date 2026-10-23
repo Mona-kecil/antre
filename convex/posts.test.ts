@@ -397,6 +397,58 @@ test("defaults to Marketing and publishes a chosen topic only on the first part"
   }
 });
 
+test("draft edits preserve omitted internal labels and clear explicit empty values", async () => {
+  const { t } = await setup();
+  const meta = {
+    topic: "T15",
+    angle: "A01",
+    format: "F01",
+    hook: "A hook",
+    notes: "Keep the example",
+  };
+  const id = await t.mutation(api.posts.createDraft, {
+    secret,
+    source: "agent",
+    parts: [{ text: "Original text" }],
+    meta,
+  });
+  const read = async () =>
+    (await t.query(api.posts.getPosts, { secret, ids: [id] })).posts[0];
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    parts: [{ text: "Revised text" }],
+  });
+  expect(await read()).toMatchObject({
+    parts: [{ text: "Revised text" }],
+    meta,
+  });
+  await t.mutation(api.posts.updateDraft, { secret, id, meta: {} });
+  expect((await read())?.meta).toEqual(meta);
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    meta: { notes: "New example" },
+  });
+  expect((await read())?.meta).toEqual({ ...meta, notes: "New example" });
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    meta: { topic: "T06" },
+  });
+  expect((await read())?.meta).toEqual({
+    ...meta,
+    topic: "T06",
+    notes: "New example",
+  });
+  await t.mutation(api.posts.updateDraft, {
+    secret,
+    id,
+    meta: { topic: "", angle: "", format: "", hook: "", notes: "" },
+  });
+  expect((await read())?.meta).toEqual({});
+});
+
 test("validates, preserves and clears the public topic independently of internal labels", async () => {
   const { t } = await setup();
   const id = await t.mutation(api.posts.createDraft, {
