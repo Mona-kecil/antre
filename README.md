@@ -65,7 +65,7 @@ npm run build
 npx convex dev --once
 ```
 
-`npx convex dev` targets the dev deployment named by `CONVEX_DEPLOYMENT` in `.env.local`, which holds no posts. The app reads the production deployment through `CONVEX_URL`. Pushing to `main` deploys the app on Vercel; deploy Convex functions to production separately with `npx convex deploy`, and run production functions with `npx convex run --prod`.
+`npx convex dev` targets the dev deployment named by `CONVEX_DEPLOYMENT` in `.env.local`, which holds no posts. The app reads the production deployment through `CONVEX_URL`. Pushing to `main` deploys the Convex functions and then the app. The production build in `vercel.json` runs `npx convex deploy` with the `CONVEX_DEPLOY_KEY` set in Vercel's production environment. Preview builds skip Convex. Run production functions with `npx convex run --prod`.
 
 Seven Convex flow tests use `convex-test`, the edge runtime, fake timers, and a global `fetch` fake. They cover WIB slot rollover and scheduled publishing, reply chains and images, rejected and ambiguous publishes, cancellation and occupied times, token errors and refresh, stale publishers, secret checks, and invalid drafts. Crons are invoked by their registered target because `convex-test` does not execute cron schedules.
 
