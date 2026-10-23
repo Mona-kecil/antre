@@ -32,14 +32,14 @@ export const actions: Actions = {
     const parsed = z
       .object({
         text: linkedinTextSchema,
-        topic: z.string().trim().max(100),
-        notes: z.string().trim().max(5000),
+        topic: z.string().trim().max(100).optional(),
+        notes: z.string().trim().max(5000).optional(),
         mode: z.enum(["draft", "queue", "schedule", "now"]),
       })
       .safeParse({
         text: form.get("text"),
-        topic: form.get("topic") ?? "",
-        notes: form.get("notes") ?? "",
+        topic: form.get("topic") ?? undefined,
+        notes: form.get("notes") ?? undefined,
         mode: form.get("mode"),
       });
     if (!parsed.success)

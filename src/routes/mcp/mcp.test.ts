@@ -170,6 +170,13 @@ test("MCP creates, changes, batches and clears public topic tags independently o
     expect((await read()).topicTag).toBe("Ecommerce");
     await invokeTool("update_draft", { id, parts: [{ text: "Edited text" }] });
     expect((await read()).topicTag).toBe("Ecommerce");
+    expect((await read()).meta).toEqual({ topic: "T15" });
+    const notesEdit = await invokeTool("update_draft", {
+      id,
+      meta: { notes: "New notes" },
+    });
+    expect(notesEdit.result.isError).not.toBe(true);
+    expect((await read()).meta).toEqual({ topic: "T15", notes: "New notes" });
     const queued = await invokeTool("queue", { id });
     expect(queued.result.isError).not.toBe(true);
     const originalAt = (await read()).at;
@@ -968,8 +975,28 @@ test("LinkedIn MCP drafts, labels, queue and settings use the separate Convex bo
     });
     const edited = await call("get_linkedin_post", { id: first.id });
     expect(edited.text).toBe("A revised lesson");
-    expect(edited).not.toHaveProperty("topic");
-    expect(edited).not.toHaveProperty("notes");
+    expect(edited).toMatchObject({
+      topic: "Engineering",
+      notes: "Keep the example",
+    });
+    await call("update_linkedin_draft", {
+      id: first.id,
+      text: "A revised lesson",
+      topic: "Writing",
+    });
+    expect(await call("get_linkedin_post", { id: first.id })).toMatchObject({
+      topic: "Writing",
+      notes: "Keep the example",
+    });
+    await call("update_linkedin_draft", {
+      id: first.id,
+      text: "A revised lesson",
+      topic: "",
+      notes: " ",
+    });
+    const cleared = await call("get_linkedin_post", { id: first.id });
+    expect(cleared).not.toHaveProperty("topic");
+    expect(cleared).not.toHaveProperty("notes");
     const board = await call("list_linkedin_posts", {
       view: "drafts",
       offset: 1,

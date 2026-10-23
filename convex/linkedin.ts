@@ -351,7 +351,10 @@ export const updateDraft = mutation(
         (post.status.kind !== "draft" && post.status.kind !== "failed")
       )
         throw new Error("Only drafts and failed LinkedIn posts can be edited");
-      await ctx.db.patch(args.id, content(args.text, args.topic, args.notes));
+      await ctx.db.patch(
+        args.id,
+        content(args.text, args.topic ?? post.topic, args.notes ?? post.notes),
+      );
     },
   ),
 );

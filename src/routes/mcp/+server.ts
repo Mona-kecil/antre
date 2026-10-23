@@ -264,7 +264,7 @@ const handler = createMcpHandler(
       {
         annotations: { destructiveHint: false, openWorldHint: false },
         description:
-          "Edit a draft or the unpublished parts of a failed post. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG",
+          'Edit a draft or the unpublished parts of a failed post. Omitted meta fields keep their current values; pass "" for a meta field to clear it. For images, call upload_image or image_upload_url first, then put the imageId in a part. JPEG/PNG only, max 8 MB; SVG must be exported as PNG',
         inputSchema: z.object({
           id,
           parts: parts.optional(),
@@ -752,7 +752,7 @@ const handler = createMcpHandler(
       {
         annotations: { destructiveHint: false, openWorldHint: false },
         description:
-          "Replace a LinkedIn draft's text, internal topic and notes. Text is required and must use 1–3000 characters; omitted topic or notes clears that field. Personal-profile text only; no media or Threads parts. Unqueue scheduled posts before editing.",
+          "Edit a LinkedIn draft's text, internal topic and notes. Text is required and must use 1–3000 characters. Omit topic or notes to keep its current value. Pass an empty string to clear that field. Personal-profile text only; no media or Threads parts. Unqueue scheduled posts before editing.",
         inputSchema: z.strictObject({
           id: linkedinId,
           text: linkedinTextSchema,

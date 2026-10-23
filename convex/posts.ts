@@ -118,7 +118,15 @@ export const updateDraft = mutation(
         ...(args.topicTag === undefined ? {} : { topicTag }),
         ...(args.parts === undefined ? {} : { parts: args.parts }),
         ...(args.source === undefined ? {} : { source: args.source }),
-        ...(args.meta === undefined ? {} : { meta: args.meta }),
+        ...(args.meta === undefined
+          ? {}
+          : {
+              meta: Object.fromEntries(
+                Object.entries({ ...post.meta, ...args.meta }).filter(
+                  ([, value]) => value !== "",
+                ),
+              ),
+            }),
       });
     },
   ),
