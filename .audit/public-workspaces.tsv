@@ -1,2 +1,8 @@
 ts	phase	decision	why	evidence	result
 2026-10-24T15:04:58Z	start	Implement the approved public-workspace plan with WorkOS	The user approved personal publishing and demo access in the first release	docs/plans/public-workspaces.md	open
+2026-10-24T15:13:08Z	auth	Select WorkOS AuthKit and inspect installed tooling	The user chose WorkOS and requested CLI or MCP use	npx workos profile list; npx workos auth status	CLI available through npx; no local profile or login
+2026-10-24T15:13:08Z	baseline	Capture pre-change tests and types	Keep existing publishing behavior verifiable during migration	npm test; npm run check	174 tests passed; zero diagnostics
+2026-10-24T15:13:08Z	implementation	Use separate backend, web and demo worktrees	Independent file ownership keeps concurrent changes separate	docs/plans/implementation-contract.md	open
+2026-10-24T15:15:47Z	auth	Start WorkOS CLI device login	The user requested the login link	workos auth login	waiting for user authorization
+2026-10-24T15:25:35Z	auth	Create a dedicated Antre staging project through the authorized WorkOS CLI	Keep app authentication separate from other projects	WorkOS project and environment API; staging callback and logout registrations	Antre staging created; no production environment
+2026-10-24T15:25:35Z	auth	Verify staging credentials against the Antre client ID before saving locally	CLI environment targeting retains the prior profile credential pair	WorkOS staging-environment credentials endpoint scoped by environment ID	Matching credentials saved to ignored .env.local; no secrets logged
