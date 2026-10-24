@@ -19,7 +19,7 @@ export function validateSchedulingSettings<T extends SchedulingSettings>(
 		settings.intervalMinutes < 5 ||
 		settings.intervalMinutes > 240
 	)
-		throw new Error('Use an interval between 5 and 240 whole minutes');
+		throw new Error('Interval must be an integer between 5 and 240 minutes');
 	if (/^[+-]/.test(settings.timeZone))
 		throw new Error('Use an IANA time zone such as Asia/Jakarta');
 	Temporal.Instant.fromEpochMilliseconds(0).toZonedDateTimeISO(

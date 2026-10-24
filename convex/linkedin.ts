@@ -472,8 +472,8 @@ function item(post: Post) {
   };
 }
 export const get = ownerQuery(postId, async (ctx: QueryCtx, { id }) => {
-  const post = await ownedRow(ctx, id);
-  return post ? item(post) : null;
+  const post = await ctx.db.get(id);
+  return post?.workspaceId === ctx.workspaceId ? item(post) : null;
 });
 
 const viewFor = (post: Post) =>

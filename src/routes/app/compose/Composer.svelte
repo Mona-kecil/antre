@@ -234,7 +234,7 @@
 			class="field"
 			name="topicTag"
 			bind:value={topicTag}
-			placeholder="e.g. Marketing"
+						placeholder="Add a public topic (optional)"
 			readonly={seed?.topicTagLocked}
 			aria-invalid={!!topicTagError}
 			aria-describedby="topic-tag-hint"

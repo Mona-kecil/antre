@@ -61,7 +61,7 @@ test("the composer saves, reloads and clears a public topic and rejects invalid 
     const [draft] = await t.query(api.posts.listQueue, {
       secret: "test-secret",
     });
-    expect(draft.topicTag).toBe("Marketing");
+    expect(draft.topicTag).toBeUndefined();
     const open = () =>
       load({
         url: new URL(`https://antre.example/app/compose?edit=${draft._id}`),
@@ -69,7 +69,7 @@ test("the composer saves, reloads and clears a public topic and rejects invalid 
       } as Parameters<typeof load>[0]);
     expect(await open()).toMatchObject({
       edit: {
-        topicTag: "Marketing",
+        topicTag: "",
         topicTagLocked: false,
         meta: { topic: "T15" },
       },

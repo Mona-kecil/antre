@@ -1,9 +1,7 @@
-import { dayStart, slots } from "../../src/lib/time";
-import {
-  addLocalDays,
-  futureLocalDay,
-  validateTimeZone,
-} from "../../src/lib/timezone";
+import { futureLocalDay } from "../../src/lib/timezone";
+import { validateSchedulingSettings } from "../../src/lib/domain/scheduling";
+export { nextSlot } from "../../src/lib/domain/scheduling";
+import { nextSlot } from "../../src/lib/domain/scheduling";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import type {
@@ -23,30 +21,7 @@ export const defaultSettings = {
 } satisfies SettingsValue;
 
 export function validateSettings(value: SettingsValue): SettingsValue {
-  if (
-    !Number.isInteger(value.intervalMinutes) ||
-    value.intervalMinutes < 5 ||
-    value.intervalMinutes > 240
-  )
-    throw new Error("Interval must be an integer between 5 and 240 minutes");
-  validateTimeZone(value.timeZone);
-  if (!value.windows.length) throw new Error("Use at least one posting window");
-  const windows = [...value.windows].sort((a, b) =>
-    a.start.localeCompare(b.start),
-  );
-  for (const [index, window] of windows.entries()) {
-    if (
-      ![window.start, window.end].every((time) =>
-        /^([01]\d|2[0-3]):[0-5]\d$/.test(time),
-      )
-    )
-      throw new Error("Window times must use HH:MM (00:00–23:59)");
-    if (window.start > window.end)
-      throw new Error("Window start must not follow its end");
-    if (index > 0 && windows[index - 1].end >= window.start)
-      throw new Error("Posting windows must not overlap, including endpoints");
-  }
-  return { ...value, windows };
+  return validateSchedulingSettings(value);
 }
 
 export async function readSettings(ctx: QueryCtx): Promise<SettingsValue> {
@@ -86,22 +61,6 @@ export function occupiedTimes(posts: Doc<"posts">[]) {
         : [],
     ),
   );
-}
-
-// Inclusive window endpoints. Each window starts its own interval grid.
-export function nextSlot(
-  settings: SettingsValue,
-  occupied: Set<number>,
-  after: number,
-): number {
-  for (
-    let day = dayStart(after, settings.timeZone);
-    ;
-    day = addLocalDays(day, 1, settings.timeZone)
-  ) {
-    for (const at of slots(day, settings))
-      if (at > after && !occupied.has(at)) return at;
-  }
 }
 
 export function validateTime(at: number, occupied: Set<number>) {

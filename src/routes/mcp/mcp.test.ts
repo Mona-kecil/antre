@@ -155,9 +155,9 @@ test("MCP creates, changes, batches and clears public topic tags independently o
       return JSON.parse(response.result.content[0].text)[0];
     };
     expect(await read()).toMatchObject({
-      topicTag: "Marketing",
       meta: { topic: "T15" },
     });
+    expect((await read()).topicTag).toBeUndefined();
     const edited = await invokeTool("update_draft", {
       id,
       topicTag: "  Ecommerce  ",

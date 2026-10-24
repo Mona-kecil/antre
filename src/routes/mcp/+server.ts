@@ -263,7 +263,7 @@ function mcpHandler(token: string) {
             topicTag: topicTagSchema
               .optional()
               .describe(
-                'Public Threads topic for the first post. Defaults to Marketing; pass "" for no tag. Separate from meta.topic, which is an internal label.',
+            'Optional public Threads topic for the first post. Omit it or pass "" for no tag. Separate from meta.topic, which is an internal label.',
               ),
           }),
         },

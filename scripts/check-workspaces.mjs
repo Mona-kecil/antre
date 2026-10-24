@@ -25,21 +25,26 @@ const clients = [];
 const users = [];
 const checks = [];
 const stamp = randomBytes(8).toString('hex');
+let activeStep = 'start';
 const report = (name) => { checks.push(name); console.log(`PASS ${name}`); };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 async function temporaryUser(label, timeZone) {
   const email = `antre-check-${stamp}-${label}@example.invalid`;
   const password = `Antre!9${randomBytes(32).toString('base64url')}`;
+  activeStep = `create WorkOS user ${label}`;
   const user = await workos.userManagement.createUser({ email, password, emailVerified: true });
   users.push(user.id);
+  activeStep = `authenticate WorkOS user ${label}`;
   const auth = await workos.userManagement.authenticateWithPassword({
     clientId: env.WORKOS_CLIENT_ID, email, password,
     session: { sealSession: true, cookiePassword: env.WORKOS_COOKIE_PASSWORD },
   });
-  const client = new ConvexHttpClient(backend.href, { logger: false });
+  const client = new ConvexHttpClient(backend.origin, { logger: false });
   client.setAuth(auth.accessToken);
+  activeStep = `read initial workspace for ${label}`;
   assert.equal(await client.query(api.workspaces.current, {}), null);
+  activeStep = `create workspace for ${label}`;
   const workspace = await client.mutation(api.workspaces.ensure, { timeZone });
   clients.push(client);
   assert(workspace?._id);
@@ -76,7 +81,7 @@ try {
 
   const token = `antre_${randomBytes(32).toString('base64url')}`;
   const grant = await a.client.mutation(api.workspaces.createAgentGrant, { label: 'Local check', tokenHash: sha256(token) });
-  const agent = new ConvexHttpClient(backend.href, { logger: false });
+  const agent = new ConvexHttpClient(backend.origin, { logger: false });
   const own = await agent.query(api.posts.getPosts, { secret: token, ids: [pa, pb] });
   assert.equal(own.posts[0]?.id, pa);
   assert.equal(own.posts[1], null);
@@ -99,6 +104,18 @@ try {
   await a.client.mutation(api.images.remove, { imageId: uploaded.imageId });
   report('stored media rejects foreign preview and attachment');
 
+  const uploadUrl = await a.client.mutation(api.images.uploadUrl, {});
+  const uploadOptions = { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: Buffer.from(png, 'base64') };
+  const upload = await fetch(uploadUrl, uploadOptions);
+  assert.equal(upload.status, 200);
+  const { storageId } = await upload.json();
+  assert(storageId);
+  assert.equal((await a.client.query(api.images.preview, { imageId: storageId })).imageId, storageId);
+  await assert.rejects(b.client.query(api.images.preview, { imageId: storageId }));
+  assert.equal((await fetch(uploadUrl, uploadOptions)).status, 400);
+  await a.client.mutation(api.images.remove, { imageId: storageId });
+  report('the HTTP upload registers ownership and consumes its one-use ticket');
+
   assert(a.cookie);
   const privatePage = await fetch(new URL('/app', app), { headers: { Cookie: `antre_session=${a.cookie}` }, redirect: 'manual' });
   assert.equal(privatePage.status, 200);
@@ -116,7 +133,8 @@ try {
   assert.equal((await b.client.query(api.posts.getPosts, { ids: [pb] })).posts[0]?.id, pb);
   report('deletion fences A while B remains accessible');
 } catch (cause) {
-  console.error(`FAIL after ${checks.length} checks: ${cause instanceof Error ? cause.message : 'unknown failure'}`);
+  console.error(`FAIL at ${activeStep} after ${checks.length} checks: ${cause instanceof Error ? cause.message : 'unknown failure'}`);
+  console.error({ name: cause?.name, code: cause?.code, status: cause?.status });
   process.exitCode = 1;
 } finally {
   const cleanup = await Promise.allSettled(clients.map(client => client.mutation(api.workspaces.deleteWorkspace, {})));

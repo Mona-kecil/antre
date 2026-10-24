@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DEFAULT_TOPIC_TAG = "Marketing";
+export const DEFAULT_TOPIC_TAG = "";
 export const MAX_TOPIC_TAG_LENGTH = 50;
 
 export const topicTagSchema = z

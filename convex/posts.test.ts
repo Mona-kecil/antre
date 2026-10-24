@@ -325,7 +325,7 @@ test("validates stored images when creating and updating drafts and returns imag
   expect(await t.query(api.posts.listQueue, {})).toHaveLength(1);
 });
 
-test("defaults to Marketing and publishes a chosen topic only on the first part", async () => {
+test("starts without a public topic and publishes a chosen topic only on the first part", async () => {
   const { t, fake } = await setup();
   const imageId = await t.run(async (ctx) =>
     storeTestImage(ctx, new Blob(["image"], { type: "image/png" })),
@@ -335,7 +335,7 @@ test("defaults to Marketing and publishes a chosen topic only on the first part"
     "  Digital Marketing  ",
     "",
   ].entries()) {
-    const expected = topicTag === undefined ? "Marketing" : topicTag.trim();
+    const expected = topicTag?.trim() ?? "";
     const text = `tagged root ${index}`;
     const id = await t.mutation(api.posts.createDraft, {
       source: "agent",
@@ -441,6 +441,7 @@ test("validates, preserves and clears the public topic independently of internal
   const id = await t.mutation(api.posts.createDraft, {
     source: "web",
     parts: [{ text: "topic edits" }],
+    topicTag: "Marketing",
     meta: { topic: "T15" },
   });
   const read = async () =>

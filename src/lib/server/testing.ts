@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -13,6 +14,7 @@ export async function workspaceTest(
   modules: Record<string, () => Promise<unknown>>,
   transactionLimits?: { documentsRead: number },
 ) {
+  vi.stubEnv("CONVEX_SITE_URL", "https://test.convex.site");
   const store = convexTest({ schema, modules, transactionLimits });
   const identity = (subject: string) => ({
     subject,
@@ -36,7 +38,5 @@ export async function storeOwnedImage(
   workspaceId: Id<"workspaces">,
   blob: Blob,
 ) {
-  const storageId = await storeTestImage(ctx, blob);
-  await ctx.db.insert("assets", { workspaceId, storageId });
-  return storageId;
+  return storeTestImage(ctx, blob, workspaceId);
 }

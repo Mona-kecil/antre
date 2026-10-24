@@ -1,4 +1,5 @@
 import { DEFAULT_TIME_ZONE, localInstant, zoned } from "./timezone";
+import { slotsForDay } from "./domain/scheduling";
 export const DAY = 86_400_000;
 export function wib(at: number) {
   return (
@@ -76,20 +77,5 @@ export function slots(
   },
 ) {
   const timeZone = settings.timeZone ?? DEFAULT_TIME_ZONE;
-  const date = isoDay(day, timeZone);
-  const result: number[] = [];
-  if (settings.intervalMinutes <= 0)
-    throw new Error("Interval must be positive");
-  for (const window of settings.windows) {
-    for (
-      let minute = minutes(window.start);
-      minute <= minutes(window.end);
-      minute += settings.intervalMinutes
-    ) {
-      const time = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
-      const at = localInstant(`${date}T${time}`, timeZone);
-      if (at !== null) result.push(at);
-    }
-  }
-  return result;
+  return slotsForDay({ ...settings, timeZone }, isoDay(day, timeZone));
 }

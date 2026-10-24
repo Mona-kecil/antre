@@ -160,7 +160,6 @@ test("LinkedIn-only workspaces publish with their own credential and reject fore
     source: "web",
   });
   for (const attempt of [
-    () => b.query(api.linkedin.get, { id: pa }),
     () => b.mutation(api.linkedin.updateDraft, { id: pa, text: "stolen" }),
     () => b.mutation(api.linkedin.queue, { id: pa }),
     () => b.mutation(api.linkedin.unqueue, { id: pa }),
@@ -169,6 +168,7 @@ test("LinkedIn-only workspaces publish with their own credential and reject fore
     () => b.mutation(api.linkedin.deletePost, { id: pa }),
   ])
     await expect(attempt()).rejects.toThrow("Not found");
+  expect(await b.query(api.linkedin.get, { id: pa })).toBeNull();
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",

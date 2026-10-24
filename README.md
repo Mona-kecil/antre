@@ -81,4 +81,12 @@ npm run build
 
 Tests exercise workspace isolation, owned media, personal agent grants, timezone transitions, migration, and publishing recovery with simulated provider responses. Live provider approval and posting need separate account tests.
 
+With the local Convex server and web server running, the integration check uses two temporary WorkOS staging users:
+
+```sh
+node scripts/check-workspaces.mjs --local
+```
+
+It requires a loopback Convex URL and staging WorkOS key. It checks real JWTs, private SSR pages, foreign IDs, media ingestion, one-use upload tickets, MCP access and revocation, and workspace deletion fencing. It removes the temporary WorkOS users and schedules local workspace cleanup when it finishes. It never connects posting profiles or publishes remote posts.
+
 `npm run build` creates a Vercel build; it does not deploy it. `npx convex dev --once` changes the selected development backend. `npx convex deploy` changes production. Do not deploy this schema over existing data without the [owner migration procedure](docs/plans/public-workspaces-rollout.md).
