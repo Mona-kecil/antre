@@ -1,13 +1,16 @@
-import { convexTest } from "convex-test";
+import {
+  workspaceTest,
+  workosOwner,
+  storeOwnedImage,
+} from "#lib/server/testing.ts";
 import { expect, test, vi } from "vitest";
 import schema from "../../../convex/schema";
 import { MAX_IMAGE_BYTES } from "../../../convex/lib/media";
-import { storeTestImage } from "../../../convex/testing/storage";
 import { POST } from "./+server";
 
-const bridge = vi.hoisted(() => ({ mutation: vi.fn() }));
+const bridge = vi.hoisted(() => ({ query: vi.fn(), mutation: vi.fn() }));
 vi.mock("#lib/server/convex.ts", () => ({
-  convex: () => ({ client: bridge, secret: "test-secret" }),
+  convex: () => ({ client: bridge, secret: undefined }),
 }));
 const modules = import.meta.glob([
   "../../../convex/**/*.ts",
@@ -15,18 +18,19 @@ const modules = import.meta.glob([
 ]);
 
 test("web uploads accept JPEG/PNG and reject WebP, SVG, empty images, and images over 8 MB", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
+  bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const upload = vi.fn(async (_url: string, init: RequestInit) => {
     if (!(init.body instanceof Blob)) throw new Error("Expected image blob");
     const image = init.body;
     return Response.json({
-      storageId: await t.run((ctx) => storeTestImage(ctx, image)),
+      storageId: await t.run((ctx) => storeOwnedImage(ctx, workspaceId, image)),
     });
   });
   const send = (type: string, bytes: Uint8Array<ArrayBuffer>) =>
     POST({
+      locals: { userId: workosOwner },
       request: new Request("https://antre.example/upload", {
         method: "POST",
         headers: { "Content-Type": type },

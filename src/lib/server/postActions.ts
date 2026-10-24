@@ -10,11 +10,11 @@ const postId = z
   .min(1)
   .transform((id) => id as Id<"posts">);
 
-/** A requested time from `at` (datetime-local, WIB) or `slot` (epoch ms). */
-function requestedTime(form: FormData) {
+/** A requested time from `at` (datetime-local, channel time zone) or `slot` (epoch ms). */
+function requestedTime(form: FormData, timeZone: string) {
   const local = form.get("at");
   if (typeof local === "string" && local) {
-    const at = parseLocal(local);
+    const at = parseLocal(local, timeZone);
     if (at === null) throw new Error("Choose a valid date and time");
     return at;
   }
@@ -25,13 +25,16 @@ function requestedTime(form: FormData) {
 /** The shared `post` form action: every change to one post's schedule. */
 export async function postAction({ request, locals }: RequestEvent) {
   const { client, secret } = await owner(locals.userId);
+  const settings = await client.query(api.posts.getSettings, { secret });
   const form = await request.formData();
   const operation = String(form.get("operation"));
   try {
     const id = postId.parse(form.get("id"));
-    const at = requestedTime(form);
+    const at = requestedTime(form, settings.timeZone);
     if (at !== undefined && at <= Date.now())
-      return fail(400, { error: "Choose a time in the future (WIB)" });
+      return fail(400, {
+        error: "Choose a time in the future in the channel time zone",
+      });
     switch (operation) {
       case "queue": {
         const queuedAt = await client.mutation(api.posts.queue, {
@@ -40,8 +43,8 @@ export async function postAction({ request, locals }: RequestEvent) {
           ...(at === undefined ? {} : { at }),
         });
         return {
-          message: `Queued for ${when(queuedAt)}`,
-          undo: { action: "/?/post", fields: { id, operation: "unqueue" } },
+          message: `Queued for ${when(queuedAt, Date.now(), settings.timeZone)}`,
+          undo: { action: "/app?/post", fields: { id, operation: "unqueue" } },
         };
       }
       case "move": {
@@ -50,7 +53,9 @@ export async function postAction({ request, locals }: RequestEvent) {
           id,
           ...(at === undefined ? {} : { at }),
         });
-        return { message: `Moved to ${when(movedAt)}` };
+        return {
+          message: `Moved to ${when(movedAt, Date.now(), settings.timeZone)}`,
+        };
       }
       case "swap":
         await client.mutation(api.posts.swap, {

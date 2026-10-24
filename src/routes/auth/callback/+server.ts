@@ -2,8 +2,8 @@ import * as env from "$app/env/private";
 import { error, redirect } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../../convex/_generated/api";
-import { convex } from "#lib/server/convex.ts";
-import { signSession, sessionSeconds } from "#lib/server/session.ts";
+import { owner } from "#lib/server/owner.ts";
+import { consumeConnection } from "#lib/server/oauth.ts";
 import type { RequestHandler } from "./$types";
 
 const shortToken = z.object({ access_token: z.string().min(1) });
@@ -15,15 +15,17 @@ const profile = z.object({
   username: z.string().min(1),
 });
 
-export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
-  const state = cookies.get("threads_state");
-  cookies.delete("threads_state", { path: "/auth/callback" });
-  if (!state || url.searchParams.get("state") !== state)
-    error(400, "OAuth state mismatch");
+export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
+  const workspaceId = consumeConnection(cookies, url, locals, "threads");
+  const { client, secret, workspace } = await owner(locals.userId);
+  if (workspace._id !== workspaceId)
+    error(400, "Connection workspace changed. Start again from Settings.");
+  if (url.searchParams.has("error"))
+    redirect(303, "/app/settings?connection=cancelled");
   const code = url.searchParams.get("code");
   if (!code) error(400, "Threads did not return an authorization code");
-  if (!env.THREADS_APP_ID || !env.THREADS_APP_SECRET || !env.SESSION_SECRET)
-    error(503, "Threads login is not configured");
+  if (!env.THREADS_APP_ID || !env.THREADS_APP_SECRET)
+    error(503, "Threads connection is not configured");
   let account;
   let token;
   try {
@@ -31,6 +33,7 @@ export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
       "https://graph.threads.net/oauth/access_token",
       {
         method: "POST",
+        signal: AbortSignal.timeout(15_000),
         body: new URLSearchParams({
           client_id: env.THREADS_APP_ID,
           client_secret: env.THREADS_APP_SECRET,
@@ -48,23 +51,23 @@ export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
       client_secret: env.THREADS_APP_SECRET,
       access_token: short.access_token,
     }).toString();
-    const long = await fetch(exchange);
+    const long = await fetch(exchange, { signal: AbortSignal.timeout(15_000) });
     if (!long.ok) error(502, "Threads token exchange failed");
     token = longToken.parse(await long.json());
     const me = await fetch(
       "https://graph.threads.net/v1.0/me?fields=id,username",
       {
+        signal: AbortSignal.timeout(15_000),
         headers: { Authorization: `Bearer ${token.access_token}` },
       },
     );
     if (!me.ok) error(502, "Threads profile lookup failed");
     account = profile.parse(await me.json());
   } catch {
-    error(502, "Could not connect to Threads. Try logging in again.");
+    error(502, "Could not connect to Threads. Start again from Settings.");
   }
-  const { client, secret } = convex();
   try {
-    await client.mutation(api.account.connect, {
+    await client.action(api.account.connect, {
       secret,
       threadsUserId: account.id,
       username: account.username,
@@ -72,14 +75,10 @@ export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
       tokenExpiresAt: Date.now() + token.expires_in * 1000,
     });
   } catch {
-    error(403, "Could not connect this account. Only the owner can log in.");
+    error(
+      403,
+      "Could not save this Threads connection. Reconnect the same profile.",
+    );
   }
-  cookies.set("antre_session", signSession(account.id), {
-    path: "/",
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    maxAge: sessionSeconds,
-  });
-  redirect(303, "/");
+  redirect(303, "/app/settings?connection=connected");
 };

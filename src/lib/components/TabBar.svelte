@@ -8,30 +8,30 @@
 		icon: IconName;
 		badge?: 'drafts' | 'replies';
 	}[] = [
-		{ href: '/', label: 'Drafts', icon: 'drafts', badge: 'drafts' },
-		{ href: '/schedule', label: 'Schedule', icon: 'schedule' },
-		{ href: '/compose', label: 'New', icon: 'plus' },
-		{ href: '/replies', label: 'Replies', icon: 'replies', badge: 'replies' },
-		{ href: '/library', label: 'Library', icon: 'library' }
+		{ href: '/app', label: 'Drafts', icon: 'drafts', badge: 'drafts' },
+		{ href: '/app/schedule', label: 'Schedule', icon: 'schedule' },
+		{ href: '/app/compose', label: 'New', icon: 'plus' },
+		{ href: '/app/replies', label: 'Replies', icon: 'replies', badge: 'replies' },
+		{ href: '/app/library', label: 'Library', icon: 'library' }
 	];
-	const linkedin = $derived(page.url.pathname.startsWith('/linkedin'));
+	const linkedin = $derived(page.url.pathname.startsWith('/app/linkedin'));
 	const tabs: typeof threadsTabs = $derived(
 		linkedin
 			? [
 					{
-						href: '/linkedin',
+						href: '/app/linkedin',
 						label: 'Drafts',
 						icon: 'drafts',
 						badge: 'drafts'
 					},
 					{
-						href: '/linkedin?view=scheduled',
+						href: '/app/linkedin?view=scheduled',
 						label: 'Schedule',
 						icon: 'schedule'
 					},
-					{ href: '/linkedin/compose', label: 'New', icon: 'plus' },
+					{ href: '/app/linkedin/compose', label: 'New', icon: 'plus' },
 					{
-						href: '/linkedin?view=published',
+						href: '/app/linkedin?view=published',
 						label: 'Library',
 						icon: 'library'
 					}
@@ -41,7 +41,7 @@
 	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
 	const pendingPath = $derived(navigating.to?.url.pathname);
 	const matches = (pathname: string | undefined, href: string) =>
-		href === '/' ? pathname === '/' : (pathname?.startsWith(href) ?? false);
+		href === '/app' ? pathname === '/app' : (pathname?.startsWith(href) ?? false);
 	function matchesLinkedIn(
 		url:
 			Pick<typeof page.url, 'pathname' | 'searchParams' | 'href'> | undefined,

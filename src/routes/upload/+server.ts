@@ -2,7 +2,6 @@ import { error } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../convex/_generated/api";
 import { validateImage } from "../../../convex/lib/media";
-import { convex } from "#lib/server/convex.ts";
 import { owner } from "#lib/server/owner.ts";
 import type { RequestHandler } from "./$types";
 
@@ -14,15 +13,18 @@ export const GET: RequestHandler = async ({ locals }) => {
   });
 };
 
-export const POST: RequestHandler = async ({ request, fetch }) => {
+export const POST: RequestHandler = async ({ request, fetch, locals }) => {
+  const { client, secret } = await owner(locals.userId);
   const type = request.headers.get("content-type") ?? "";
+  const declaredSize = Number(request.headers.get("content-length"));
+  if (declaredSize > 8 * 1024 * 1024)
+    error(413, "Images must be at most 8 MB.");
   const image = await request.blob();
   try {
     validateImage({ contentType: type, size: image.size });
   } catch (cause) {
     error(400, cause instanceof Error ? cause.message : "Invalid image");
   }
-  const { client, secret } = convex();
   const url = await client.mutation(api.images.uploadUrl, { secret });
   const response = await fetch(url, {
     method: "POST",

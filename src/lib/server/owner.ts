@@ -2,26 +2,16 @@ import { error } from "@sveltejs/kit";
 import { api } from "../../../convex/_generated/api";
 import { convex } from "./convex.ts";
 
-export function requireOwner<A extends { threadsUserId: string }>(
-  userId: string,
-  account: A | null,
-): A {
-  if (!account || account.threadsUserId !== userId)
-    error(403, "This session does not belong to the owner");
-  return account;
-}
-
-/** Convex client for the signed-in owner; 403 for any other Threads account. */
-export async function owner(userId: string) {
+export async function owner(userId: string | undefined) {
+  if (!userId) error(401, "Sign in to your workspace.");
   const { client, secret } = convex();
-  const account = requireOwner(
-    userId,
-    await client.query(api.account.current, { secret }),
-  );
-  return { client, secret, account };
+  const workspace = await client.query(api.workspaces.current, {});
+  if (!workspace || workspace.state !== "active")
+    error(403, "This workspace is unavailable.");
+  const account = await client.query(api.account.current, { secret });
+  return { client, secret, account, workspace };
 }
 
-/** Convex's own message in dev ("Uncaught Error: …"); production redacts it. */
 export function reason(cause: unknown, fallback: string) {
   const message = cause instanceof Error ? cause.message : "";
   return /Uncaught Error: ([^\n]+)/.exec(message)?.[1] ?? fallback;

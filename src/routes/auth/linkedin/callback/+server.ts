@@ -3,13 +3,9 @@ import { error, redirect } from "@sveltejs/kit";
 import { z } from "zod";
 import { api } from "../../../../../convex/_generated/api";
 import { owner } from "#lib/server/owner.ts";
-import { readSession } from "#lib/server/session.ts";
+import { consumeConnection } from "#lib/server/oauth.ts";
 import type { RequestHandler } from "./$types";
 
-const stateSchema = z.object({
-  state: z.string().min(1),
-  ownerId: z.string().min(1),
-});
 const tokenSchema = z.object({
   access_token: z.string().min(1),
   expires_in: z.number().positive().finite(),
@@ -20,28 +16,13 @@ const profileSchema = z.object({
   name: z.string().min(1),
 });
 
-export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
-  const stored = cookies.get("linkedin_state");
-  cookies.delete("linkedin_state", { path: "/auth/linkedin/callback" });
-  let state: z.infer<typeof stateSchema>;
-  try {
-    state = stateSchema.parse(JSON.parse(stored ?? "null"));
-  } catch {
-    error(400, "LinkedIn connection expired. Start again from Settings.");
-  }
-  const session = readSession(cookies.get("antre_session"));
-  if (
-    !session ||
-    session.userId !== state.ownerId ||
-    url.searchParams.get("state") !== state.state
-  )
-    error(
-      400,
-      "LinkedIn connection did not match this session. Start again from Settings.",
-    );
-  const { client, secret } = await owner(session.userId);
+export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
+  const workspaceId = consumeConnection(cookies, url, locals, "linkedin");
+  const { client, secret, workspace } = await owner(locals.userId);
+  if (workspace._id !== workspaceId)
+    error(400, "Connection workspace changed. Start again from Settings.");
   if (url.searchParams.has("error"))
-    redirect(303, "/linkedin/settings?connection=cancelled");
+    redirect(303, "/app/linkedin/settings?connection=cancelled");
   const code = url.searchParams.get("code");
   if (!code) error(400, "LinkedIn did not return an authorization code");
   if (!env.LINKEDIN_CLIENT_ID || !env.LINKEDIN_CLIENT_SECRET)
@@ -88,7 +69,7 @@ export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
     );
   }
   try {
-    await client.mutation(api.linkedin.connect, {
+    await client.action(api.linkedin.connect, {
       secret,
       memberId: profile.sub,
       name: profile.name,
@@ -101,5 +82,5 @@ export const GET: RequestHandler = async ({ url, cookies, fetch }) => {
       "Could not save this LinkedIn connection. Reconnect the same personal profile.",
     );
   }
-  redirect(303, "/linkedin/settings?connection=connected");
+  redirect(303, "/app/linkedin/settings?connection=connected");
 };
