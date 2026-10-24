@@ -153,6 +153,43 @@ body[data-appearance=dark] .seg button[aria-pressed=true]{background:#2b2b28;col
 .dayline .mk{cursor:pointer}
 .dayline .mk:hover rect{filter:brightness(1.1)}
 .dayline .sel{stroke:var(--ink);stroke-width:2}
+.wg{display:grid;grid-template-columns:20px repeat(7,minmax(0,1fr));gap:3px;margin-top:2px}
+.wga,.wgc{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-content:start;min-width:0}
+.wgc{padding:0 2px 4px;border-radius:8px;cursor:pointer}
+.wgc:hover:not(.on){background:var(--hover)}
+.wgc.on{background:var(--selected)}
+.wgh{display:grid;justify-items:center;padding:4px 0 2px;min-height:36px;width:100%}
+.wgh .dow{font-size:10.5px;color:var(--muted)}
+.wgh .dn{font-size:13px;font-weight:600}
+.wgc.past .dn{color:var(--muted);font-weight:500}
+.wgc.today .dow{color:var(--ink);font-weight:700}
+.ap[data-theme=lime] .wgc.on{background:color-mix(in oklab,var(--primary) 22%,transparent)}
+.wgw{display:grid;gap:2px}
+.wgw i{position:relative;height:7px;border-radius:2px;background:var(--field)}
+.wga .wgw i{background:none;font-size:10px;line-height:7px;font-style:normal;color:var(--muted);text-align:right;padding-right:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wgw i.q{background:var(--c)}
+.wgw i.pub{background:var(--muted);opacity:.55}
+.wgw i.f{background:var(--error)}
+.wgw i.h{background:var(--warn)}
+.wgw i.gone{opacity:.4}
+.wgw i.fr:hover{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.wgw i.nx{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink)}
+.wgw i.sel{box-shadow:0 0 0 2px var(--ink)}
+.wgw i[data-action]{cursor:pointer}
+.wgw i.nowafter::after{content:"";position:absolute;left:-3px;right:-3px;bottom:-2.5px;height:1.5px;background:var(--error);border-radius:1px}
+.side-cap .capr{grid-template-columns:48px minmax(0,1fr) 30px;gap:6px;padding:6px 4px;font-size:12px;white-space:nowrap}
+.side-cap .segs{height:12px;gap:1.5px}
+.sd{gap:3px;align-content:start;padding:5px 0 7px}
+.sdots{display:grid;grid-template-columns:repeat(2,5px);gap:2px;justify-content:center;min-height:19px;align-content:start}
+.sdots i{width:5px;height:5px;border-radius:50%;background:var(--c)}
+.sdots i.pub{background:var(--muted);opacity:.6}
+.sdots i.f{background:var(--error)}
+.sdots i.h{background:var(--warn)}
+.sfill{width:18px;height:3px;border-radius:2px;background:var(--field);overflow:hidden}
+.sfill i{display:block;height:100%;background:var(--ink);opacity:.5}
+.day.on .sdots i{box-shadow:0 0 0 1px var(--paper)}
+.day.on .sfill{background:color-mix(in oklab,currentColor 20%,transparent)}
+.day.on .sfill i{background:currentColor}
 .acct{margin-top:18px;padding:14px 4px 0;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;font-size:12.5px;line-height:1.35}
 .acct strong{font-weight:600;display:block}
 
@@ -403,6 +440,9 @@ body[data-appearance=dark] .seg button[aria-pressed=true]{background:#2b2b28;col
     <fieldset><legend>Right panel</legend><div class="seg">
       <button data-pref="panel" data-value="context">1 · Context</button><button data-pref="panel" data-value="agenda">2 · Agenda</button><button data-pref="panel" data-value="week">3 · Week</button>
     </div></fieldset>
+    <fieldset><legend>Left panel</legend><div class="seg">
+      <button data-pref="side" data-value="grid">i · Grid</button><button data-pref="side" data-value="rows">ii · Rows</button><button data-pref="side" data-value="strip">iii · Strip</button><button data-pref="side" data-value="line">iv · Line</button>
+    </div></fieldset>
     <button class="reset" data-reset>Reset sample</button>
   </header>
   <div class="frame"><div class="ws" id="ws"></div></div>
@@ -414,9 +454,9 @@ const root = document.getElementById('ap');
 const ws = document.getElementById('ws');
 const allowed = {
   theme: ['lime','glaze'], layout: ['auto','phone','desktop'], appearance: ['light','dark'],
-  view: ['drafts','schedule','library','replies'], composer: ['inline','dialog','focus'], panel: ['context','agenda','week']
+  view: ['drafts','schedule','library','replies'], composer: ['inline','dialog','focus'], panel: ['context','agenda','week'], side: ['grid','rows','strip','line']
 };
-const pref = { theme: 'lime', layout: 'auto', appearance: 'light', view: 'drafts', composer: 'inline', panel: 'context' };
+const pref = { theme: 'lime', layout: 'auto', appearance: 'light', view: 'drafts', composer: 'dialog', panel: 'agenda', side: 'grid' };
 try {
   const q = new URLSearchParams(location.search);
   for (const k in allowed) if (allowed[k].includes(q.get(k))) pref[k] = q.get(k);
@@ -660,6 +700,42 @@ function dayButton(d) {
   return `<button class="day${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}${d < TODAY ? ' past' : ''}" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${n} posts"${d === state.day ? ' aria-current="date"' : ''}><span class="dow">${fDow.format(d).slice(0, 2)}</span><span class="dn">${fNum.format(d)}</span><span class="dc">${n || '–'}</span></button>`;
 }
 
+function weekGrid(ch) {
+  const nf = nextFree(ch), iv = CH[ch].interval * MIN;
+  const groups = d => CH[ch].windows.map(([h1, m1, h2, m2]) => { const out = []; for (let t = d + (h1 * 60 + m1) * MIN; t <= d + (h2 * 60 + m2) * MIN; t += iv) out.push(t); return out; });
+  const axis = groups(TODAY).map(g => `<span class="wgw">${g.map((t, i) => `<i>${i === 0 ? +clock(t).slice(0, 2) : ''}</i>`).join('')}</span>`).join('');
+  const col = d => {
+    const by = new Map(onDay(d, ch).map(p => [d + Math.round((p.at - d) / iv) * iv, p]));
+    const lastPast = d === TODAY ? slots(d, ch).filter(t => t <= NOW).at(-1) : null;
+    const cell = t => {
+      const p = by.get(t), now = t === lastPast ? ' nowafter' : '';
+      if (p) return `<i class="${slotKind(p)}${p.id === state.selected ? ' sel' : ''}${now}" style="--c:${TOPICS[p.topic]?.c ?? 'var(--ink)'}" data-action="mark" data-id="${p.id}" title="${clock(p.at)} · ${esc(firstLine(p))}"></i>`;
+      if (t > NOW) return `<i class="fr${t === nf ? ' nx' : ''}${now}" data-action="fill" data-t="${t}" title="${clock(t)} · Free"></i>`;
+      return `<i class="gone${now}"></i>`;
+    };
+    return `<div class="wgc${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}${d < TODAY ? ' past' : ''}" data-action="day" data-t="${d}">
+      <button class="wgh" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${onDay(d, ch).length} posts"${d === state.day ? ' aria-current="date"' : ''}><span class="dow">${fDow.format(d).slice(0, 2)}</span><span class="dn">${fNum.format(d)}</span></button>
+      ${groups(d).map(g => `<span class="wgw">${g.map(cell).join('')}</span>`).join('')}</div>`;
+  };
+  return `<div class="wg"><div class="wga" aria-hidden="true"><span class="wgh"></span>${axis}</div>${weekDays().map(col).join('')}</div>`;
+}
+function stripDay(d) {
+  const list = onDay(d, state.channel), sl = slots(d, state.channel);
+  return `<button class="day sd${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}${d < TODAY ? ' past' : ''}" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${list.length} of ${sl.length} slots"${d === state.day ? ' aria-current="date"' : ''}><span class="dow">${fDow.format(d).slice(0, 2)}</span><span class="dn">${fNum.format(d)}</span>
+    <span class="sdots">${list.map(p => `<i class="${slotKind(p)}" style="--c:${TOPICS[p.topic]?.c ?? 'var(--ink)'}"></i>`).join('')}</span><span class="sfill"><i style="width:${list.length / sl.length * 100}%"></i></span></button>`;
+}
+function weekTotals(ch) {
+  const days = weekDays(), nf = nextFree(ch);
+  return `<b>${days.reduce((n, d) => n + onDay(d, ch).length, 0)}</b> posts · <b>${days.reduce((n, d) => n + freeSlots(d, ch).length, 0)}</b> free${nf ? ` · next <b>${shortWhen(nf)}</b>` : ''}`;
+}
+function schedBlock(ch, w) {
+  switch (pref.side) {
+    case 'grid': return `${weekGrid(ch)}<p class="dsum">${weekTotals(ch)}</p>`;
+    case 'rows': return `<div class="cap side-cap">${capRows(ch)}</div><p class="dsum">${weekTotals(ch)}</p>`;
+    case 'strip': return `<div class="week">${w.map(stripDay).join('')}</div><p class="dsum">${weekTotals(ch)}</p>`;
+  }
+  return `<div class="week">${w.map(dayButton).join('')}</div>${dayline(state.day, ch, 220, true)}<p class="dsum">${dayName(state.day)} · ${daySummary(state.day, ch)}</p>`;
+}
 function side() {
   const ch = state.channel, w = weekDays();
   const replyCount = replies.filter(r => !r.answer).length;
@@ -677,9 +753,7 @@ function side() {
     <section class="sched" aria-label="Schedule overview">
       <div class="sched-head"><span>${fNum.format(w[0])} ${fMon.format(w[0])} – ${fNum.format(w[6])} ${fMon.format(w[6])}</span>
         <button class="ib" data-action="week" data-d="-7" aria-label="Previous week">${icon('left', 15)}</button><button class="ib" data-action="week" data-d="7" aria-label="Next week">${icon('right', 15)}</button></div>
-      <div class="week">${w.map(dayButton).join('')}</div>
-      ${dayline(state.day, ch, 220, true)}
-      <p class="dsum">${dayName(state.day)} · ${daySummary(state.day, ch)}</p>
+      ${schedBlock(ch, w)}
     </section>
     <div class="acct">${av(ch, 'sm')}<div><strong>${esc(CH[ch].user)}</strong><span class="muted">${TZ} · UTC+7</span></div><span class="conn" title="Connected" style="margin-left:auto"></span></div>
   </aside>`;
@@ -888,18 +962,21 @@ function panelAgenda() {
   if (!nowDone) rows += `<li class="nowrow"><span class="num">${clock(NOW)}</span><i></i></li>`;
   return `<h2>${dayName(day)}<span class="muted" style="font-weight:500;font-size:12.5px">${dayName(day) === fDay.format(day) ? '' : fDay.format(day)}</span></h2><p class="dsum" style="margin:4px 0 0">${daySummary(day, ch)}</p><ol class="agenda">${rows}</ol>`;
 }
+const slotKind = p => p.state === 'published' ? 'pub' : p.state === 'failed' ? 'f' : p.state === 'held' ? 'h' : 'q';
+function capRows(ch) {
+  return weekDays().map(d => {
+    const list = onDay(d, ch), by = new Map(list.map(p => [p.at, p])), sl = slots(d, ch);
+    const segs = sl.map(t => { const p = by.get(t); return p ? `<i class="${slotKind(p)}" style="--c:${TOPICS[p.topic]?.c ?? 'var(--ink)'}"></i>` : `<i class="${t <= NOW ? 'gone' : ''}"></i>`; }).join('');
+    return `<button class="capr${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${list.length} of ${sl.length} slots"><span><b>${fDow.format(d)}</b> <span class="muted num">${fNum.format(d)}</span></span><span class="segs">${segs}</span><span class="r num">${list.length}/${sl.length}</span></button>`;
+  }).join('');
+}
 function panelWeek() {
   const ch = state.channel, days = weekDays();
-  const rows = days.map(d => {
-    const list = onDay(d, ch), by = new Map(list.map(p => [p.at, p])), sl = slots(d, ch);
-    const segs = sl.map(t => { const p = by.get(t); if (!p) return `<i class="${t <= NOW ? 'gone' : ''}"></i>`; const k = p.state === 'published' ? 'pub' : p.state === 'failed' ? 'f' : p.state === 'held' ? 'h' : 'q'; return `<i class="${k}" style="--c:${TOPICS[p.topic]?.c ?? 'var(--ink)'}"></i>`; }).join('');
-    return `<button class="capr${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}" data-action="day" data-t="${d}"><span><b>${fDow.format(d)}</b> <span class="muted num">${fNum.format(d)}</span></span><span class="segs">${segs}</span><span class="r num">${list.length}/${sl.length}</span></button>`;
-  }).join('');
   const wk = days.flatMap(d => onDay(d, ch));
   const mix = Object.entries(TOPICS).map(([k, t]) => [t, wk.filter(p => p.topic === k).length]).filter(x => x[1]);
   const up = posts.filter(p => p.channel === ch && ['queued', 'held', 'failed'].includes(p.state) && p.at > NOW).sort((a, b) => a.at - b.at).slice(0, 5);
   return `<h2>Week of ${fNum.format(days[0])} ${fMon.format(days[0])}</h2><p class="dsum" style="margin:4px 0 0"><b>${wk.length}</b> posts · <b>${days.reduce((n, d) => n + freeSlots(d, ch).length, 0)}</b> free</p>
-    <div class="cap">${rows}</div>
+    <div class="cap">${capRows(ch)}</div>
     <h3>Topic mix</h3><div class="mix">${mix.map(([t, n]) => `<i style="--c:${t.c};flex:${n}"></i>`).join('')}</div>
     <ul class="legend">${mix.map(([t, n]) => `<li><i class="dot" style="--c:${t.c}"></i>${t.name}<span class="n num">${n}</span></li>`).join('')}</ul>
     <h3>Up next</h3><ol class="upnext">${up.map(p => `<li><button data-action="mark" data-id="${p.id}"><i class="dot" style="--c:${TOPICS[p.topic]?.c}"></i><span class="t">${esc(firstLine(p))}</span><time>${when(p.at)}${p.state !== 'queued' ? ` · ${FLAGS[p.state][2]}` : ''}</time></button></li>`).join('')}</ol>`;
@@ -1022,7 +1099,7 @@ ws.addEventListener('click', ev => {
     case 'edit': return openEditor(p.id);
     case 'select': state.selected = p.id; break;
     case 'mark': state.selected = p.id; state.day = dayOf(p.at); if (pref.view !== 'schedule' || !isDesk()) { pref.view = 'schedule'; applyPrefs(); } state.fold = state.fold || p.state === 'published'; render(); document.getElementById(`post-${p.id}`)?.scrollIntoView({ block: 'nearest' }); return;
-    case 'day': state.day = +d.t; state.selected = null; if (pref.view !== 'schedule') { pref.view = 'schedule'; applyPrefs(); } break;
+    case 'day': state.day = +d.t; state.selected = null; if (pref.view !== 'schedule' && !(isDesk() && pref.panel === 'agenda')) { pref.view = 'schedule'; applyPrefs(); } break;
     case 'week': state.day += +d.d * DAY; state.selected = null; break;
     case 'today': state.day = TODAY; break;
     case 'tab': state.tab = d.tab; break;
@@ -1054,7 +1131,7 @@ ws.addEventListener('click', ev => {
     case 'add-part': editor.parts.push(''); editor.format = 'thread'; render(); ws.querySelector(`[data-part="${editor.parts.length - 1}"]`)?.focus(); return;
     case 'remove-part': editor.parts.splice(+d.i, 1); editor.dirty = true; break;
     case 'cancel': return closeEditor();
-    case 'keep': state.confirm = null; break;
+    case 'keep': { state.confirm = null; render(); const ta = ws.querySelector('[data-part]'); ta?.focus(); ta?.setSelectionRange(ta.value.length, ta.value.length); return; }
     case 'discard': { const then = state.confirm?.then; state.confirm = null; editor = null; then?.(); break; }
     case 'save': {
       const then = state.confirm?.then; state.confirm = null;
