@@ -14,8 +14,7 @@
 	{@render lead?.()}
 	<h1>{title}</h1>
 	<div class="end">
-		{#if !page.url.pathname.endsWith('/compose')}<ChannelSwitch
-			/>{/if}{@render children?.()}
+		{#if !page.url.pathname.endsWith('/compose')}<span class="channel"><ChannelSwitch /></span>{/if}{@render children?.()}
 	</div>
 </header>
 
@@ -44,5 +43,25 @@
 	.end {
 		display: flex;
 		align-items: center;
+	}
+
+	.channel {
+		display: contents;
+	}
+
+	@media (min-width: 1100px) {
+		.bar {
+			height: 64px;
+			padding: 0 16px 0 24px;
+		}
+
+		h1 {
+			font-size: 24px;
+			line-height: 30px;
+		}
+
+		.channel {
+			display: none;
+		}
 	}
 </style>

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { tick } from 'svelte';
+	import { MediaQuery } from 'svelte/reactivity';
 	import { topicColor, type TaxonomyEntry } from '#lib/labels.ts';
 	import { act } from '#lib/toast.svelte.ts';
 	import { calendarDay } from '#lib/calendar.ts';
@@ -21,6 +22,8 @@
 	import type { PageProps } from './$types';
 
 	const LIMIT = 20;
+	// The desktop sidebar and Agenda show the week and the day, so the page drops its own.
+	const wide = new MediaQuery('min-width: 1100px', false);
 	let { data }: PageProps = $props();
 	const taxonomy = $derived((data.taxonomy ?? []) as TaxonomyEntry[]);
 	const username = $derived(data.account?.username ?? 'you');
@@ -105,7 +108,7 @@
 
 <svelte:head><title>Schedule · antre</title></svelte:head>
 
-<TopBar title="Schedule">
+<TopBar title={wide.current ? (data.day === data.today ? 'Today' : dayLabel(data.day)) : 'Schedule'}>
 	{#if data.day !== data.today}
 		<a class="today" href="/app/schedule">Today</a>
 	{/if}
@@ -114,6 +117,7 @@
 
 <AccountBanner held={data.held} />
 
+{#if !wide.current}
 <nav class="week" aria-label="Days">
 	<a class="icon-btn" href={dayHref(calendarDay(data.day, -7, data.settings.timeZone))} aria-label="Previous week"><Icon name="left" /></a>
 	{#each week as at, i}
@@ -154,6 +158,7 @@
 	{selected}
 	onselect={select}
 />
+{/if}
 
 {#if foldable}
 	<button
@@ -347,11 +352,11 @@
 	}
 
 	.day[aria-current='date'] {
-		background: var(--fg);
+		background: var(--primary);
 	}
 
 	.day[aria-current='date'] * {
-		color: var(--on-fg) !important;
+		color: var(--on-primary) !important;
 	}
 
 	.summary {

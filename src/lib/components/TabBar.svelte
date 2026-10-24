@@ -1,73 +1,18 @@
 <script lang="ts">
 	import { navigating, page } from '$app/state';
-	import Icon, { type IconName } from './Icon.svelte';
+	import { isCurrent, isLinkedIn, navItems } from '#lib/nav.ts';
+	import Icon from './Icon.svelte';
 
-	const threadsTabs: {
-		href: string;
-		label: string;
-		icon: IconName;
-		badge?: 'drafts' | 'replies';
-	}[] = [
-		{ href: '/app', label: 'Drafts', icon: 'drafts', badge: 'drafts' },
-		{ href: '/app/schedule', label: 'Schedule', icon: 'schedule' },
-		{ href: '/app/compose', label: 'New', icon: 'plus' },
-		{ href: '/app/replies', label: 'Replies', icon: 'replies', badge: 'replies' },
-		{ href: '/app/library', label: 'Library', icon: 'library' }
-	];
-	const linkedin = $derived(page.url.pathname.startsWith('/app/linkedin'));
-	const tabs: typeof threadsTabs = $derived(
-		linkedin
-			? [
-					{
-						href: '/app/linkedin',
-						label: 'Drafts',
-						icon: 'drafts',
-						badge: 'drafts'
-					},
-					{
-						href: '/app/linkedin?view=scheduled',
-						label: 'Schedule',
-						icon: 'schedule'
-					},
-					{ href: '/app/linkedin/compose', label: 'New', icon: 'plus' },
-					{
-						href: '/app/linkedin?view=published',
-						label: 'Library',
-						icon: 'library'
-					}
-				]
-			: threadsTabs
-	);
+	const linkedin = $derived(isLinkedIn(page.url));
+	const tabs = $derived(navItems(page.url));
 	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
-	const pendingPath = $derived(navigating.to?.url.pathname);
-	const matches = (pathname: string | undefined, href: string) =>
-		href === '/app' ? pathname === '/app' : (pathname?.startsWith(href) ?? false);
-	function matchesLinkedIn(
-		url:
-			Pick<typeof page.url, 'pathname' | 'searchParams' | 'href'> | undefined,
-		href: string
-	) {
-		if (!url) return false;
-		const target = new URL(href, url.href);
-		const view = url.searchParams.get('view');
-		const section =
-			view === 'scheduled' || view === 'published' ? view : 'drafts';
-		return (
-			url.pathname === target.pathname &&
-			section === (target.searchParams.get('view') ?? 'drafts')
-		);
-	}
 </script>
 
 <nav aria-label="Main" class:linkedin>
 	{#each tabs as tab}
 		{@const count = tab.badge ? badges[tab.badge] : 0}
-		{@const active = linkedin
-			? matchesLinkedIn(page.url, tab.href)
-			: matches(page.url.pathname, tab.href)}
-		{@const pending = linkedin
-			? matchesLinkedIn(navigating.to?.url, tab.href)
-			: matches(pendingPath, tab.href)}
+		{@const active = isCurrent(page.url, tab.href)}
+		{@const pending = isCurrent(navigating.to?.url, tab.href)}
 		<a
 			href={tab.href}
 			data-sveltekit-preload-code="eager"

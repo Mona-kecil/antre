@@ -1,11 +1,15 @@
 :root {
 	color-scheme: light dark;
 	--bg: #ffffff;
-	--bg-2: #f3f3f3;
+	--bg-2: #efeeea;
 	--bg-sheet: #ffffff;
-	--fg: #000000;
-	--fg-2: #6b6b6b;
-	--fg-3: #a3a3a3;
+	--canvas: #f6f5f2;
+	--fg: #0f0f0d;
+	--fg-2: #6b6a63;
+	--fg-3: #a3a29b;
+	--primary: #e4f222;
+	--on-primary: #0f0f0d;
+	--focus: #7c8700;
 	--line: rgb(0 0 0 / 0.1);
 	--line-2: rgb(0 0 0 / 0.18);
 	--press: rgb(0 0 0 / 0.05);
@@ -27,12 +31,16 @@
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--bg: #101010;
-		--bg-2: #1e1e1e;
-		--bg-sheet: #181818;
-		--fg: #f3f5f7;
-		--fg-2: #9a9a9a;
-		--fg-3: #616161;
+		--bg: #0e0e0c;
+		--bg-2: #262622;
+		--bg-sheet: #181816;
+		--canvas: #1a1a17;
+		--fg: #f4f3ee;
+		--fg-2: #9a9890;
+		--fg-3: #5f5e58;
+		--primary: #cad649;
+		--on-primary: #0f0f0d;
+		--focus: #cad649;
 		--line: rgb(243 245 247 / 0.12);
 		--line-2: rgb(243 245 247 / 0.22);
 		--press: rgb(243 245 247 / 0.06);
@@ -107,7 +115,7 @@ button:disabled {
 }
 
 :focus-visible {
-	outline: 2px solid var(--fg);
+	outline: 2px solid var(--focus);
 	outline-offset: 2px;
 }
 
@@ -148,8 +156,12 @@ time,
 }
 
 .btn-primary {
-	background: var(--fg);
-	color: var(--on-fg);
+	background: var(--primary);
+	color: var(--on-primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+	filter: brightness(0.96);
 }
 
 .btn-secondary {

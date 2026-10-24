@@ -244,8 +244,8 @@
 	}
 
 	.avatar.me {
-		background: var(--fg);
-		color: var(--on-fg);
+		background: var(--primary);
+		color: var(--on-primary);
 	}
 
 	.avatar.small {

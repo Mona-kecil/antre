@@ -198,8 +198,8 @@
 		width: 36px;
 		height: 36px;
 		border-radius: 50%;
-		background: var(--fg);
-		color: var(--on-fg);
+		background: var(--primary);
+		color: var(--on-primary);
 		font-weight: 700;
 	}
 	.connection {
