@@ -1,6 +1,6 @@
 ---
 name: antre
-description: A phone-first review-and-plan console for one Threads account.
+description: A phone-first review and publishing console with private workspaces and a public demo.
 colors:
   paper: "#ffffff"
   paper-dim: "#f3f3f3"
@@ -15,6 +15,27 @@ colors:
   night-dim: "#1e1e1e"
   night-ink: "#f3f5f7"
 typography:
+  navigation-label:
+    fontSize: "10px"
+    fontWeight: 400
+  public-display-large:
+    fontSize: "60px"
+    fontWeight: 700
+  public-display:
+    fontSize: "48px"
+    fontWeight: 700
+  public-display-small:
+    fontSize: "40px"
+    fontWeight: 700
+  public-brand:
+    fontSize: "32px"
+    fontWeight: 750
+  public-section:
+    fontSize: "24px"
+    fontWeight: 700
+  section:
+    fontSize: "17px"
+    fontWeight: 700
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif"
     fontSize: "20px"
@@ -126,6 +147,8 @@ Topic dots take their colour from the taxonomy (`topicColor`), so they are conte
 **Character:** native and invisible. The post text should read exactly like Threads, so no display face competes with it.
 
 ### Hierarchy
+- **Public display** (700, 40–60px, -0.04em): the landing page's opening heading. The phone layout uses 48px, reducing to 40px below 360px. Private app and demo page titles keep the 20px title size.
+- **Public brand and section** (32px wordmark, 24px section headings): the wider landing page. They use the same system font and ink palette as the app.
 - **Title** (700, 20px/24px, -0.02em): top bar page titles.
 - **Section** (700, 17px): day summary ("Today"), sheet titles and settings section heads.
 - **Body** (400, 15px/1.4): post text, reply text and list rows.

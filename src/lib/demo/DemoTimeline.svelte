@@ -79,7 +79,7 @@
 		left: 7%;
 		right: 7%;
 		height: 8px;
-		border-radius: 4px;
+		border-radius: 999px;
 		background: var(--bg-2);
 	}
 	.slot {
@@ -104,18 +104,18 @@
 		display: block;
 		width: 8px;
 		height: 16px;
-		border-radius: 4px;
+		border-radius: 999px;
 		background: var(--fg);
 	}
 	.mark span {
 		margin: auto;
-		transition: height 260ms var(--ease);
+		transition: transform 260ms var(--ease);
 	}
 	.mark:hover {
 		background: var(--press);
 	}
 	.mark.selected span {
-		height: 26px;
+		transform: scaleY(1.625);
 	}
 	.static-mark {
 		position: absolute;
@@ -152,13 +152,13 @@
 	.next small {
 		display: block;
 		margin-top: 4px;
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 600;
 	}
 	.edge {
 		position: absolute;
 		bottom: 8px;
-		font-size: 11px;
+		font-size: 12px;
 		font-variant-numeric: tabular-nums;
 		color: var(--fg-2);
 	}

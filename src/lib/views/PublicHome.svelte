@@ -155,7 +155,7 @@
 		gap: 16px;
 	}
 	.wordmark {
-		font-size: 30px;
+		font-size: 32px;
 		font-weight: 750;
 		letter-spacing: -0.04em;
 		text-decoration: none;
@@ -187,7 +187,7 @@
 	}
 	.lede {
 		margin-top: 24px;
-		font-size: 21px;
+		font-size: 20px;
 		line-height: 1.45;
 		max-width: 27ch;
 		text-wrap: pretty;
@@ -378,13 +378,13 @@
 			padding-inline: 16px;
 		}
 		.wordmark {
-			font-size: 26px;
+			font-size: 24px;
 		}
 		nav {
 			gap: 10px;
 		}
 		h1 {
-			font-size: 42px;
+			font-size: 40px;
 		}
 		footer p {
 			display: none;

@@ -981,7 +981,7 @@
 		font-size: 12px;
 	}
 	.demo-banner a {
-		font-size: 21px;
+		font-size: 20px;
 		font-weight: 750;
 		letter-spacing: -0.04em;
 		text-decoration: none;
@@ -1130,7 +1130,7 @@
 		border: 0;
 		padding: 0 4px;
 		background: var(--bg);
-		font-size: 14px;
+		font-size: 15px;
 		font-weight: 600;
 	}
 	.today {
@@ -1292,7 +1292,7 @@
 		align-items: center;
 		padding: 10px 12px 10px 16px;
 		border: 1px solid var(--line-2);
-		border-radius: 12px;
+		border-radius: 10px;
 		background: var(--bg-sheet);
 		font-size: 13px;
 	}
@@ -1432,7 +1432,7 @@
 	}
 	.outcome-option strong {
 		display: block;
-		font-size: 14px;
+		font-size: 15px;
 	}
 	.outcome-option small {
 		display: block;
@@ -1512,7 +1512,7 @@
 			gap: 8px;
 		}
 		.demo-banner strong {
-			font-size: 11px;
+			font-size: 12px;
 		}
 	}
 </style>
