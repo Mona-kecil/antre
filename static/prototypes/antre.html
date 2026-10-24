@@ -164,6 +164,7 @@ html, body { margin: 0; background: transparent; }
 #antre-prototype .theme-description { font-size: 13px; color: inherit; }
 #antre-prototype .app-frame { container: antre / inline-size; width: 100%; margin-inline: auto; }
 #antre-prototype[data-layout="phone"] .app-frame { max-width: 390px; }
+#antre-prototype[data-layout="desktop"] .app-frame { width: 1280px; zoom: var(--prototype-desktop-scale,1); }
 #antre-prototype .workspace { background: var(--prototype-canvas); border: 1px solid var(--prototype-line); border-radius: var(--prototype-panel-radius); overflow: clip; }
 #antre-prototype .sidebar { display: none; }
 #antre-prototype .brand { display: flex; align-items: center; gap: 10px; font-size: 26px; font-weight: 600; letter-spacing: -.035em; }
@@ -250,6 +251,8 @@ html, body { margin: 0; background: transparent; }
 #antre-prototype .empty p { color: var(--prototype-muted); margin: 8px 0 16px; }
 #antre-prototype .notice { padding: 12px 16px; background: var(--prototype-field); font-size: 13px; border-bottom: 1px solid var(--prototype-line); }
 #antre-prototype .notice:empty { display: none; }
+#antre-prototype .edit-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; margin-bottom: 20px; background: var(--prototype-field); border-radius: var(--prototype-panel-radius); }
+#antre-prototype .edit-recovery p { flex: 1 1 240px; font-size: 13px; }
 #antre-prototype .source-note { display: flex; flex-wrap: wrap; gap: 6px 16px; padding-top: 16px; font-size: 12px; line-height: 1.6; color: inherit; }
 #antre-prototype .source-note p { flex-basis: 100%; }
 @container antre (min-width: 700px) {
@@ -321,6 +324,7 @@ html, body { margin: 0; background: transparent; }
       <button class="button" data-action="reset">Reset sample</button>
     </div>
     <p class="theme-description" id="theme-description"></p>
+    <p class="theme-description" id="layout-description" role="status" hidden></p>
   </header>
   <div class="app-frame"><div class="workspace" id="workspace"></div></div>
   <footer class="source-note">
@@ -412,8 +416,17 @@ html, body { margin: 0; background: transparent; }
       glaze: 'Glaze: monochrome, inset paper panels and gloss on the primary action.'
     };
     document.getElementById('theme-description').textContent = descriptions[preferences.theme];
+    fitDesktop();
     syncUrl();
   }
+  function fitDesktop() {
+    const scale = Math.min(1,(root.clientWidth || 1280) / 1280);
+    root.style.setProperty('--prototype-desktop-scale',String(scale));
+    const note = document.getElementById('layout-description');
+    note.hidden = preferences.layout !== 'desktop' || scale === 1;
+    note.textContent = note.hidden ? '' : `1280px desktop preview scaled to ${Math.round(scale*100)}%. Choose Auto or Phone for full-size controls.`;
+  }
+  new ResizeObserver(fitDesktop).observe(root);
   function navigation() {
     return ['drafts','schedule','library'].map(view => `<button class="nav-link" data-view="${view}"${preferences.view === view ? ' aria-current="page"' : ''}>${svg(view)}<span>${view[0].toUpperCase()+view.slice(1)}</span><span class="count">${posts.filter(post => post.status === view && post.channel === channel).length}</span></button>`).join('');
   }
@@ -425,7 +438,7 @@ html, body { margin: 0; background: transparent; }
   }
   function thread(parts, postChannel) {
     if (postChannel === 'linkedin') return `<div class="post-text">${escape(parts.join('\n\n'))}</div>`;
-    return `<ol class="thread" aria-label="Thread with ${parts.length} parts">${parts.map((part,index) => `<li class="thread-part"><span class="part-number" aria-hidden="true">${index+1}</span><p class="post-text">${escape(part || 'Your words will appear here.')}</p></li>`).join('')}</ol>`;
+    return `<ol class="thread" aria-label="Thread with ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}">${parts.map((part,index) => `<li class="thread-part"><span class="part-number" aria-hidden="true">${index+1}</span><p class="post-text">${escape(part || 'Your words will appear here.')}</p></li>`).join('')}</ol>`;
   }
   function picker(postId) {
     if (!timePicker || timePicker.id !== postId) return '';
@@ -450,6 +463,20 @@ html, body { margin: 0; background: transparent; }
   }
   function ensureEditor() {
     if (!editor) editor = {id: null, channel, parts: ['']};
+  }
+  function hasPendingEdits() {
+    if (!editor) return false;
+    const saved = editor.id ? findPost(editor.id) : null;
+    if (!saved) return editor.parts.length > 1 || editor.parts.some(part => part.length > 0);
+    return editor.channel !== saved.channel || editor.parts.length !== saved.parts.length || editor.parts.some((part,index) => part !== saved.parts[index]);
+  }
+  function editRecovery() {
+    if (preferences.view === 'compose' || !hasPendingEdits()) return '';
+    return `<section class="edit-recovery" aria-label="Unsaved post"><p>You have an unsaved ${channelName(editor.channel)} post. Resume it, or discard it to start another.</p><div class="form-actions"><button class="button" data-action="resume">Resume edit</button><button class="button" data-action="discard-edit">Discard edit</button></div></section>`;
+  }
+  function resumeEditor() {
+    preferences.view = 'compose'; channel = editor.channel; timePicker = null; render(true);
+    document.getElementById('part-0').focus({preventScroll:true});
   }
   function editorView() {
     ensureEditor();
@@ -488,6 +515,7 @@ html, body { margin: 0; background: transparent; }
       <div class="mobile-top">${brand}<span class="sample-label">Sample workspace</span></div>
       <div class="notice" role="status" aria-live="polite">${escape(message)}</div>
       <main class="main"><header class="page-header"><div><h1 tabindex="-1" id="view-title">${labels[view]}</h1><p class="page-description">${descriptions[view]}</p></div>${view !== 'compose' ? `<button class="button primary" data-action="new">${svg('plus')}New post</button>` : '<button class="button" data-view="drafts">Back to drafts</button>'}</header>
+      ${editRecovery()}
       <div class="channel-row"><div class="channel-tabs" role="group" aria-label="Post channel">${['threads','linkedin'].map(value => `<button class="button" data-channel="${value}" aria-pressed="${channel === value}">${channelName(value)}</button>`).join('')}</div><span class="view-count">${view === 'compose' ? 'Sample account' : posts.filter(post=>post.status===view && post.channel===channel).length+' '+(view === 'drafts' ? 'drafts' : view === 'schedule' ? 'queued' : 'published')}</span></div>
       ${view !== 'compose' ? `<details class="mobile-plan"><summary>Posting plan / ${count('schedule')} queued</summary><div class="plan-content">${plan()}</div></details>` : ''}
       ${view === 'compose' ? editorView() : listView()}</main><aside class="context" aria-label="Posting context">${plan()}</aside><nav class="bottom-nav" aria-label="Phone workspace">${navigation()}</nav>`;
@@ -526,10 +554,12 @@ html, body { margin: 0; background: transparent; }
       form.reportValidity(); return;
     }
     if (timePicker.id === 'editor' && !validateEditor()) return;
-    const post = timePicker.id === 'editor' ? storeDraft() : findPost(timePicker.id);
+    const fromEditor = timePicker.id === 'editor';
+    const post = fromEditor ? storeDraft() : findPost(timePicker.id);
     Object.assign(post,{status:'schedule',date,time});
     message = `${timePicker.moving ? 'Time moved' : 'Post queued'} for ${dateLabel(date)} at ${time} WIB. Sample only.`;
-    channel = post.channel; preferences.view = 'schedule'; timePicker = null; editor = null;
+    channel = post.channel; preferences.view = 'schedule'; timePicker = null;
+    if (fromEditor) editor = null;
     render(true);
   });
   root.addEventListener('click',event => {
@@ -556,9 +586,17 @@ html, body { margin: 0; background: transparent; }
       posts = freshPosts(); nextId = 7; editor = null; timePicker = null; channel = 'threads';
       preferences.view = 'drafts'; message = 'Sample posts restored. Your theme and layout are kept.'; render(true);
     } else if (action === 'new') {
-      editor = {id:null,channel,parts:['']}; preferences.view = 'compose'; timePicker = null; message = ''; render(true);
-      document.getElementById('part-0').focus({preventScroll:true});
+      const pending = hasPendingEdits();
+      if (!pending) editor = {id:null,channel,parts:['']};
+      message = pending ? 'Resumed your unsaved post.' : ''; resumeEditor();
+    } else if (action === 'resume') {
+      message = 'Resumed your unsaved post.'; resumeEditor();
+    } else if (action === 'discard-edit') {
+      editor = null; message = 'Unsaved edits discarded.'; render(true);
     } else if (action === 'edit' || action === 'reuse') {
+      if (hasPendingEdits()) {
+        message = 'Resume or discard your unsaved post before opening another.'; render(true); return;
+      }
       editor = {id: action === 'reuse' ? null : post.id,channel:post.channel,parts:[...post.parts]};
       preferences.view = 'compose'; channel = post.channel; message = ''; timePicker = null; render(true);
     } else if (action === 'add-part') {
@@ -568,7 +606,12 @@ html, body { margin: 0; background: transparent; }
     } else if (action === 'save' && validateEditor()) {
       storeDraft(); channel = editor.channel; preferences.view = 'drafts'; timePicker = null; editor = null;
       message = 'Draft saved in this prototype.'; render(true);
-    } else if (action === 'queue' || action === 'move') openTime(post.id,action === 'move');
+    } else if (action === 'queue' || action === 'move') {
+      if (hasPendingEdits() && editor.id === post.id) {
+        message = 'This post has unsaved edits. Resume them to save or queue this version.'; render(true); return;
+      }
+      openTime(post.id,action === 'move');
+    }
     else if (action === 'queue-editor' && validateEditor()) openTime('editor');
     else if (action === 'cancel-time') { timePicker = null; render(); }
     else if (action === 'publish') {
