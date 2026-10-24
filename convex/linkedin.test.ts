@@ -1,12 +1,13 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { escapeLinkedInText, linkedinTextSchema } from "../src/lib/linkedin";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
-import { escapeLinkedInText, linkedinTextSchema } from "../src/lib/linkedin";
+import {
+  connectLinkedin,
+  connectThreads,
+  ownerTest,
+} from "./testing/workspace.test-support";
 
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
 const day = 86_400_000;
 const wib = (value: string) => Date.parse(`${value}+07:00`);
 const account = {
@@ -23,25 +24,22 @@ const settings = {
 };
 
 async function setup() {
-  const t = convexTest(schema, modules);
-  await t.mutation(api.linkedin.connect, { secret, ...account });
-  await t.mutation(api.linkedin.updateSettings, { secret, ...settings });
+  const t = await ownerTest();
+  await connectLinkedin(t, { ...account });
+  await t.mutation(api.linkedin.updateSettings, { ...settings });
   const draft = (text = "A lesson from shipping.") =>
     t.mutation(api.linkedin.createDraft, {
-      secret,
       text,
       topic: "Engineering",
       source: "web",
     });
-  const get = (id: Id<"linkedinPosts">) =>
-    t.query(api.linkedin.get, { secret, id });
+  const get = (id: Id<"linkedinPosts">) => t.query(api.linkedin.get, { id });
   return { t, draft, get };
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(wib("2026-10-19T05:45:00"));
-  vi.stubEnv("ANTRE_SECRET", secret);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -51,24 +49,22 @@ afterEach(() => {
 
 test("connection claims one member, returns no token and preserves separate Threads ownership", async () => {
   const { t } = await setup();
-  await t.mutation(api.account.connect, {
-    secret,
+  await connectThreads(t, {
     threadsUserId: "threads-owner",
     username: "Threads owner",
     accessToken: "threads-token",
     tokenExpiresAt: account.tokenExpiresAt,
   });
-  expect(await t.query(api.linkedin.current, { secret })).toEqual({
+  expect(await t.query(api.linkedin.current, {})).toEqual({
     memberId: account.memberId,
     name: account.name,
     tokenExpiresAt: account.tokenExpiresAt,
     needsReconnect: false,
   });
   await expect(
-    t.mutation(api.linkedin.connect, { secret, ...account, memberId: "other" }),
+    connectLinkedin(t, { ...account, memberId: "other" }),
   ).rejects.toThrow("same LinkedIn member");
-  await t.mutation(api.linkedin.connect, {
-    secret,
+  await connectLinkedin(t, {
     ...account,
     accessToken: "replacement",
   });
@@ -78,7 +74,7 @@ test("connection claims one member, returns no token and preserves separate Thre
         (await ctx.db.query("linkedinAccount").unique())?.accessToken,
     ),
   ).toBe("replacement");
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  expect(await t.query(api.account.current, {})).toMatchObject({
     threadsUserId: "threads-owner",
     needsReconnect: false,
   });
@@ -88,8 +84,8 @@ test("connection claims one member, returns no token and preserves separate Thre
 });
 
 test("LinkedIn starts with one daily slot and shares its text parser with callers", async () => {
-  const t = convexTest(schema, modules);
-  expect(await t.query(api.linkedin.getSettings, { secret })).toEqual({
+  const t = await ownerTest();
+  expect(await t.query(api.linkedin.getSettings, {})).toEqual({
     windows: [{ start: "08:00", end: "08:00" }],
     intervalMinutes: 60,
     timeZone: "Asia/Jakarta",
@@ -110,20 +106,18 @@ test.each(["draft", "failed"] as const)(
   async (kind) => {
     const { t, get } = await setup();
     const id = await t.mutation(api.linkedin.createDraft, {
-      secret,
       source: "agent",
       text: "Original text",
       topic: "Engineering",
       notes: "Keep the example",
     });
     if (kind === "failed")
-      await t.run((ctx) =>
+      await t.run(async (ctx) =>
         ctx.db.patch(id, {
           status: { kind: "failed", at: Date.now(), error: "Rejected" },
         }),
       );
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Revised text",
     });
@@ -134,7 +128,6 @@ test.each(["draft", "failed"] as const)(
       status: { kind },
     });
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Topic edit",
       topic: " Writing ",
@@ -144,7 +137,6 @@ test.each(["draft", "failed"] as const)(
       notes: "Keep the example",
     });
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Notes edit",
       notes: " New example ",
@@ -154,7 +146,6 @@ test.each(["draft", "failed"] as const)(
       notes: "New example",
     });
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Clear topic",
       topic: " ",
@@ -162,13 +153,11 @@ test.each(["draft", "failed"] as const)(
     expect(await get(id)).not.toHaveProperty("topic");
     expect(await get(id)).toMatchObject({ notes: "New example" });
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Clear notes",
       notes: "",
     });
     await t.mutation(api.linkedin.updateDraft, {
-      secret,
       id,
       text: "Still unlabelled",
     });
@@ -183,7 +172,6 @@ test("draft validation, editing, list counts and settings stay inside LinkedIn",
   await expect(draft("a".repeat(3001))).rejects.toThrow("1–3000");
   const id = await draft("a".repeat(3000));
   await t.mutation(api.linkedin.updateDraft, {
-    secret,
     id,
     text: " Edited ",
     topic: " Systems ",
@@ -196,27 +184,26 @@ test("draft validation, editing, list counts and settings stay inside LinkedIn",
     status: { kind: "draft" },
   });
   const threads = await t.mutation(api.posts.createDraft, {
-    secret,
     parts: [{ text: "Threads only" }],
     source: "web",
   });
-  const at = await t.mutation(api.posts.queue, { secret, id: threads });
-  expect(await t.mutation(api.linkedin.queue, { secret, id })).toBe(at);
+  const at = await t.mutation(api.posts.queue, { id: threads });
+  expect(await t.mutation(api.linkedin.queue, { id })).toBe(at);
   await expect(
-    t.mutation(api.linkedin.updateDraft, { secret, id, text: "Changed" }),
+    t.mutation(api.linkedin.updateDraft, { id, text: "Changed" }),
   ).rejects.toThrow("Only drafts");
-  expect(
-    await t.query(api.linkedin.list, { secret, view: "scheduled" }),
-  ).toMatchObject({
-    total: 1,
-    counts: { drafts: 0, scheduled: 1, published: 0, failed: 0 },
-    items: [{ id }],
+  expect(await t.query(api.linkedin.list, { view: "scheduled" })).toMatchObject(
+    {
+      total: 1,
+      counts: { drafts: 0, scheduled: 1, published: 0, failed: 0 },
+      items: [{ id }],
+    },
+  );
+  expect(await t.query(api.library.page, { view: "scheduled" })).toMatchObject({
+    counts: { scheduled: 1 },
+    items: [{ id: threads }],
   });
-  expect(
-    await t.query(api.library.page, { secret, view: "scheduled" }),
-  ).toMatchObject({ counts: { scheduled: 1 }, items: [{ id: threads }] });
   const saved = await t.mutation(api.linkedin.updateSettings, {
-    secret,
     ...settings,
     intervalMinutes: 60,
     topics: ["Systems", "Writing"],
@@ -226,17 +213,16 @@ test("draft validation, editing, list counts and settings stay inside LinkedIn",
     intervalMinutes: 60,
     topics: ["Systems", "Writing"],
   });
-  expect(await t.query(api.posts.getSettings, { secret })).toMatchObject({
+  expect(await t.query(api.posts.getSettings, {})).toMatchObject({
     intervalMinutes: 30,
   });
-  await t.mutation(api.linkedin.updateSettings, { secret, ...settings });
-  expect(await t.query(api.linkedin.getSettings, { secret })).toMatchObject({
+  await t.mutation(api.linkedin.updateSettings, { ...settings });
+  expect(await t.query(api.linkedin.getSettings, {})).toMatchObject({
     topics: ["Systems", "Writing"],
     writingInstructions: "Write about practical engineering.",
   });
   await expect(
     t.mutation(api.linkedin.updateSettings, {
-      secret,
       ...settings,
       topics: ["same", "same"],
     }),
@@ -246,18 +232,18 @@ test("draft validation, editing, list counts and settings stay inside LinkedIn",
 test("queue times reject collisions, canceled jobs cannot publish a requeued draft", async () => {
   const { t, draft, get } = await setup();
   const id = await draft();
-  const firstAt = await t.mutation(api.linkedin.queue, { secret, id });
+  const firstAt = await t.mutation(api.linkedin.queue, { id });
   const queued = await get(id);
   if (queued?.status.kind !== "queued") throw new Error("Expected queued post");
   const second = await draft("Second");
   await expect(
-    t.mutation(api.linkedin.queue, { secret, id: second, at: firstAt }),
+    t.mutation(api.linkedin.queue, { id: second, at: firstAt }),
   ).rejects.toThrow("taken");
   await expect(
-    t.mutation(api.linkedin.queue, { secret, id: second, at: Date.now() }),
+    t.mutation(api.linkedin.queue, { id: second, at: Date.now() }),
   ).rejects.toThrow("future");
-  await t.mutation(api.linkedin.unqueue, { secret, id });
-  await t.mutation(api.linkedin.queue, { secret, id, at: firstAt + 60_000 });
+  await t.mutation(api.linkedin.unqueue, { id });
+  await t.mutation(api.linkedin.queue, { id, at: firstAt + 60_000 });
   vi.setSystemTime(firstAt + 60_000);
   await t.mutation(internal.linkedin.fire, {
     id,
@@ -271,18 +257,17 @@ test("queue times reject collisions, canceled jobs cannot publish a requeued dra
 test("automatic queue compaction moves only LinkedIn slots and preserves pinned posts", async () => {
   const { t, draft, get } = await setup();
   await t.mutation(api.linkedin.updateSettings, {
-    secret,
     ...settings,
     gapPolicy: "autoFill",
   });
   const first = await draft("First");
   const second = await draft("Second");
   const pin = await draft("Pinned");
-  const at = await t.mutation(api.linkedin.queue, { secret, id: first });
-  await t.mutation(api.linkedin.queue, { secret, id: second });
+  const at = await t.mutation(api.linkedin.queue, { id: first });
+  await t.mutation(api.linkedin.queue, { id: second });
   const pinnedAt = at + 60 * 60_000;
-  await t.mutation(api.linkedin.queue, { secret, id: pin, at: pinnedAt });
-  await t.mutation(api.linkedin.unqueue, { secret, id: first });
+  await t.mutation(api.linkedin.queue, { id: pin, at: pinnedAt });
+  await t.mutation(api.linkedin.unqueue, { id: first });
   expect(await get(second)).toMatchObject({
     status: { kind: "queued", at },
     pinned: false,
@@ -305,7 +290,7 @@ test("publisher sends one personal-profile text request and saves its returned U
   vi.stubGlobal("fetch", fetch);
   vi.stubEnv("LINKEDIN_API_VERSION", "202608");
   const id = await draft();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(fetch).toHaveBeenCalledTimes(1);
   const [url, request] = fetch.mock.calls[0];
@@ -331,9 +316,9 @@ test("publisher sends one personal-profile text request and saves its returned U
       permalink: "https://www.linkedin.com/feed/update/urn:li:share:123/",
     },
   });
-  await expect(
-    t.mutation(api.linkedin.publishNow, { secret, id }),
-  ).rejects.toThrow("cannot be published");
+  await expect(t.mutation(api.linkedin.publishNow, { id })).rejects.toThrow(
+    "cannot be published",
+  );
 });
 
 test.each(["network", "server", "missingId"] as const)(
@@ -346,7 +331,7 @@ test.each(["network", "server", "missingId"] as const)(
     });
     vi.stubGlobal("fetch", fetch);
     const id = await draft();
-    await t.mutation(api.linkedin.publishNow, { secret, id });
+    await t.mutation(api.linkedin.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await get(id)).toMatchObject({
       status: {
@@ -355,26 +340,25 @@ test.each(["network", "server", "missingId"] as const)(
         error: expect.stringContaining("duplicate"),
       },
     });
-    await t.mutation(api.linkedin.connect, {
-      secret,
+    await connectLinkedin(t, {
       ...account,
       accessToken: "reconnected",
     });
     await t.mutation(internal.linkedin.sweepStuck, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(fetch).toHaveBeenCalledTimes(1);
-    await expect(
-      t.mutation(api.linkedin.publishNow, { secret, id }),
-    ).rejects.toThrow("duplicate");
-    await expect(
-      t.mutation(api.linkedin.retry, { secret, id }),
-    ).rejects.toThrow("duplicate");
-    await expect(
-      t.mutation(api.linkedin.queue, { secret, id }),
-    ).rejects.toThrow("Only drafts");
-    await expect(
-      t.mutation(api.linkedin.unqueue, { secret, id }),
-    ).rejects.toThrow("cannot be returned");
+    await expect(t.mutation(api.linkedin.publishNow, { id })).rejects.toThrow(
+      "duplicate",
+    );
+    await expect(t.mutation(api.linkedin.retry, { id })).rejects.toThrow(
+      "duplicate",
+    );
+    await expect(t.mutation(api.linkedin.queue, { id })).rejects.toThrow(
+      "Only drafts",
+    );
+    await expect(t.mutation(api.linkedin.unqueue, { id })).rejects.toThrow(
+      "cannot be returned",
+    );
     fetch.mockResolvedValue(
       new Response(null, {
         status: 201,
@@ -382,7 +366,6 @@ test.each(["network", "server", "missingId"] as const)(
       }),
     );
     await t.mutation(api.linkedin.retry, {
-      secret,
       id,
       confirmDuplicateRisk: true,
       expectedStartedAt: (await get(id))?.retryAttempt ?? undefined,
@@ -408,17 +391,16 @@ test.each(["expired", "unauthorized"] as const)(
         if (!row) throw new Error("Missing connection");
         await ctx.db.patch(row._id, { tokenExpiresAt: Date.now() - 1 });
       });
-    await t.mutation(api.linkedin.publishNow, { secret, id });
+    await t.mutation(api.linkedin.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await get(id)).toMatchObject({
       status: { kind: "held", reason: "auth" },
     });
-    expect(await t.query(api.linkedin.current, { secret })).toMatchObject({
+    expect(await t.query(api.linkedin.current, {})).toMatchObject({
       needsReconnect: true,
     });
     expect(fetch).toHaveBeenCalledTimes(mode === "expired" ? 0 : 1);
-    await t.mutation(api.linkedin.connect, {
-      secret,
+    await connectLinkedin(t, {
       ...account,
       accessToken: "reconnected",
     });
@@ -433,12 +415,11 @@ test.each(["expired", "unauthorized"] as const)(
 test("a stale 401 cannot mark a reconnected account invalid", async () => {
   const { t, draft, get } = await setup();
   const id = await draft();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   const post = await get(id);
   if (post?.status.kind !== "publishing")
     throw new Error("Expected publishing post");
-  await t.mutation(api.linkedin.connect, {
-    secret,
+  await connectLinkedin(t, {
     ...account,
     accessToken: "replacement",
   });
@@ -448,7 +429,7 @@ test("a stale 401 cannot mark a reconnected account invalid", async () => {
     expectedToken: account.accessToken,
     result: { kind: "auth", error: "Old request rejected" },
   });
-  expect(await t.query(api.linkedin.current, { secret })).toMatchObject({
+  expect(await t.query(api.linkedin.current, {})).toMatchObject({
     needsReconnect: false,
   });
   expect(await get(id)).toMatchObject({ status: { kind: "queued" } });
@@ -465,18 +446,20 @@ test("claimed dispatch runs once, stuck recovery holds it, and matching late suc
   );
   vi.stubGlobal("fetch", fetch);
   const id = await draft();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   const post = await get(id);
   if (post?.status.kind !== "publishing")
     throw new Error("Expected publishing post");
   expect(
     await t.mutation(internal.linkedin.claimDispatch, {
+      expectedToken: account.accessToken,
       id,
       startedAt: post.status.startedAt,
     }),
   ).toBe(true);
   expect(
     await t.mutation(internal.linkedin.claimDispatch, {
+      expectedToken: account.accessToken,
       id,
       startedAt: post.status.startedAt,
     }),
@@ -502,7 +485,7 @@ test("claimed dispatch runs once, stuck recovery holds it, and matching late suc
 test("an approved retry fences an earlier attempt's late success within the same millisecond", async () => {
   const { t, draft, get } = await setup();
   const id = await draft();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   const original = await get(id);
   if (original?.status.kind !== "publishing")
     throw new Error("Expected publishing post");
@@ -513,7 +496,6 @@ test("an approved retry fences an earlier attempt's late success within the same
     result: { kind: "unknown", error: "No response" },
   });
   await t.mutation(api.linkedin.retry, {
-    secret,
     id,
     confirmDuplicateRisk: true,
     expectedStartedAt: original.status.startedAt,
@@ -560,7 +542,7 @@ test.each([
     const fetch = vi.fn(async () => new Response(null, { status }));
     vi.stubGlobal("fetch", fetch);
     const id = await draft();
-    await t.mutation(api.linkedin.publishNow, { secret, id });
+    await t.mutation(api.linkedin.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await get(id)).toMatchObject({
       status: { kind, ...(kind === "held" ? { reason: "unknown" } : {}) },
@@ -577,7 +559,7 @@ test("pre-dispatch stuck action restarts once and a definite rejection stays fai
   const fetch = vi.fn(async () => new Response(null, { status: 403 }));
   vi.stubGlobal("fetch", fetch);
   const id = await draft();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   vi.setSystemTime(Date.now() + 16 * 60_000);
   await t.mutation(internal.linkedin.sweepStuck, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -585,7 +567,7 @@ test("pre-dispatch stuck action restarts once and a definite rejection stays fai
   expect(await get(id)).toMatchObject({
     status: { kind: "failed", error: expect.stringContaining("403") },
   });
-  expect(await t.query(api.linkedin.current, { secret })).toMatchObject({
+  expect(await t.query(api.linkedin.current, {})).toMatchObject({
     needsReconnect: false,
   });
 });
@@ -596,22 +578,21 @@ test("unknown retry confirmation cannot be replayed against a later ambiguous at
   vi.stubGlobal("fetch", fetch);
   const id = await draft();
   expect((await get(id))?.retryAttempt).toBeNull();
-  await t.mutation(api.linkedin.publishNow, { secret, id });
+  await t.mutation(api.linkedin.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   const first = await get(id);
   if (first?.retryAttempt == null)
     throw new Error("Expected an unknown held attempt");
   const confirmation = {
-    secret,
     id,
     confirmDuplicateRisk: true,
     expectedStartedAt: first.retryAttempt,
   };
-  expect(
-    await t.query(api.linkedin.list, { secret, view: "scheduled" }),
-  ).toMatchObject({ items: [{ id, retryAttempt: first.retryAttempt }] });
+  expect(await t.query(api.linkedin.list, { view: "scheduled" })).toMatchObject(
+    { items: [{ id, retryAttempt: first.retryAttempt }] },
+  );
   await expect(
-    t.mutation(api.linkedin.retry, { secret, id, confirmDuplicateRisk: true }),
+    t.mutation(api.linkedin.retry, { id, confirmDuplicateRisk: true }),
   ).rejects.toThrow("duplicate");
   await t.mutation(api.linkedin.retry, confirmation);
   expect((await get(id))?.retryAttempt).toBeNull();

@@ -1,6 +1,7 @@
 import { compareValues } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
+import type { OwnedQueryCtx as QueryCtx } from "../access";
 
 type PostValue = Omit<Doc<"posts">, "_id" | "_creationTime">;
 type Stats = Omit<Doc<"postStats">, "_id" | "_creationTime">;
@@ -78,14 +79,19 @@ async function updateStats(
   before: Doc<"posts"> | null,
   after: PostValue | null,
 ) {
-  const row = await ctx.db.query("postStats").unique();
+  const workspaceId = after?.workspaceId ?? before?.workspaceId;
+  if (!workspaceId) throw new Error("Unbound workspace");
+  const row = await ctx.db
+    .query("postStats")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .unique();
   const stats = row
     ? { counts: row.counts, publishedFacets: row.publishedFacets }
     : emptyStats();
   if (before?.libraryIndexed) contribute(stats, before, -1);
   if (after) contribute(stats, after, 1);
-  if (row) await ctx.db.replace(row._id, stats);
-  else await ctx.db.insert("postStats", stats);
+  if (row) await ctx.db.replace(row._id, { ...stats, workspaceId });
+  else await ctx.db.insert("postStats", { ...stats, workspaceId });
 }
 
 // Every post writer, including backfill, records its contribution in the same transaction.
@@ -124,6 +130,14 @@ export async function deletePost(ctx: MutationCtx, id: Id<"posts">) {
   const before = await ctx.db.get(id);
   if (!before) return;
   if (before.libraryIndexed) await updateStats(ctx, before, null);
+  if (!before.workspaceId) throw new Error("Unbound workspace");
+  const replies = await ctx.db
+    .query("replies")
+    .withIndex("workspace_by_postId", (q) =>
+      q.eq("workspaceId", before.workspaceId).eq("postId", id),
+    )
+    .collect();
+  for (const reply of replies) await ctx.db.delete(reply._id);
   await ctx.db.delete(id);
 }
 
@@ -136,8 +150,9 @@ export function postsByKind(
   if (kind === "draft")
     return ctx.db
       .query("posts")
-      .withIndex("by_kind_at", (q) =>
+      .withIndex("workspace_by_kind_at", (q) =>
         q
+          .eq("workspaceId", ctx.workspaceId)
           .eq("status.kind", kind)
           .eq("status.at", undefined)
           .gte("_creationTime", since)
@@ -145,19 +160,28 @@ export function postsByKind(
       );
   return ctx.db
     .query("posts")
-    .withIndex("by_kind_at", (q) =>
-      q.eq("status.kind", kind).gte("status.at", since).lt("status.at", until),
+    .withIndex("workspace_by_kind_at", (q) =>
+      q
+        .eq("workspaceId", ctx.workspaceId)
+        .eq("status.kind", kind)
+        .gte("status.at", since)
+        .lt("status.at", until),
     );
 }
 
 export function unindexedPosts(ctx: QueryCtx) {
   return ctx.db
     .query("posts")
-    .withIndex("by_libraryIndexed", (q) => q.eq("libraryIndexed", undefined));
+    .withIndex("workspace_by_libraryIndexed", (q) =>
+      q.eq("workspaceId", ctx.workspaceId).eq("libraryIndexed", undefined),
+    );
 }
 
 export async function libraryStats(ctx: QueryCtx) {
-  const row = await ctx.db.query("postStats").unique();
+  const row = await ctx.db
+    .query("postStats")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+    .unique();
   const stats = row
     ? { counts: row.counts, publishedFacets: row.publishedFacets }
     : emptyStats();
@@ -187,3 +211,28 @@ export async function schedulingPosts(ctx: QueryCtx) {
 
 export const creationOrder = (a: Doc<"posts">, b: Doc<"posts">) =>
   a._creationTime - b._creationTime || compareValues(a._id, b._id);
+
+export async function indexPostBatch(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+  posts: Doc<"posts">[],
+) {
+  const row = await ctx.db
+    .query("postStats")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .unique();
+  const stats = row
+    ? { counts: row.counts, publishedFacets: row.publishedFacets }
+    : emptyStats();
+  for (const post of posts) {
+    if (post.workspaceId !== workspaceId || post.libraryIndexed)
+      throw new Error("Invalid backfill batch");
+    contribute(stats, post, 1);
+    await ctx.db.patch(post._id, {
+      libraryIndexed: true,
+      rootPublishedId: post.publishedIds[0],
+    });
+  }
+  if (row) await ctx.db.replace(row._id, { ...stats, workspaceId });
+  else await ctx.db.insert("postStats", { ...stats, workspaceId });
+}

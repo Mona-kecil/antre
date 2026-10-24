@@ -1,33 +1,26 @@
-import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import schema from "./schema";
+import { connectThreads, ownerTest } from "./testing/workspace.test-support";
 
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-
-test("first connect claims ownership, reconnect replaces the token, and another Threads user cannot claim it", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
+test("workspace connects one verified Threads identity and reconnect replaces the token", async () => {
   try {
-    const t = convexTest(schema, modules);
+    const t = await ownerTest();
     const account = {
-      secret: "test-secret",
       threadsUserId: "owner",
       username: "mona",
       accessToken: "test-token",
       tokenExpiresAt: Date.now() + 100000,
     };
-    await t.mutation(api.account.connect, account);
+    await connectThreads(t, account);
     await t.run(async (ctx) => {
       const row = await ctx.db.query("account").unique();
       if (row) await ctx.db.patch(row._id, { needsReconnect: true });
     });
-    await t.mutation(api.account.connect, {
+    await connectThreads(t, {
       ...account,
       accessToken: "new-test-token",
     });
-    expect(
-      await t.query(api.account.current, { secret: "test-secret" }),
-    ).toEqual({
+    expect(await t.query(api.account.current, {})).toEqual({
       threadsUserId: "owner",
       username: "mona",
       needsReconnect: false,
@@ -36,7 +29,7 @@ test("first connect claims ownership, reconnect replaces the token, and another 
       lastRefreshErrorAt: null,
     });
     await expect(
-      t.mutation(api.account.connect, { ...account, threadsUserId: "other" }),
+      connectThreads(t, { ...account, threadsUserId: "other" }),
     ).rejects.toThrow("another Threads account");
     expect(
       await t.run(

@@ -1,14 +1,14 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import schema from "./schema";
+import {
+  fixtureWorkspace,
+  ownerTest,
+  workspaceIdOf,
+} from "./testing/workspace.test-support";
 
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
 const now = Date.parse("2026-10-18T04:00:00Z");
 
 beforeEach(() => {
-  vi.stubEnv("ANTRE_SECRET", secret);
   vi.spyOn(Date, "now").mockReturnValue(now);
 });
 afterEach(() => {
@@ -18,9 +18,10 @@ afterEach(() => {
 });
 
 test("sync pages imports, removes missing older posts only after complete paging, preserves recent posts and drafts, and refreshes metrics", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const existing = await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "owner",
       username: "owner",
       accessToken: "test-token",
@@ -28,6 +29,7 @@ test("sync pages imports, removes missing older posts only after complete paging
       needsReconnect: false,
     });
     return await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "antre root" }, { text: "part 2" }],
       publishedIds: ["antre-root", "antre-reply"],
       source: "agent",
@@ -41,6 +43,7 @@ test("sync pages imports, removes missing older posts only after complete paging
   });
   const { missing, recent } = await t.run(async (ctx) => {
     const missing = await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "deleted on Threads" }],
       publishedIds: ["deleted-root", "deleted-reply"],
       source: "agent",
@@ -51,6 +54,7 @@ test("sync pages imports, removes missing older posts only after complete paging
       },
     });
     const recent = await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "recent publication" }],
       publishedIds: ["recent-root"],
       source: "web",
@@ -63,7 +67,6 @@ test("sync pages imports, removes missing older posts only after complete paging
     return { missing, recent };
   });
   const draft = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "agent",
     parts: [{ text: "keep draft" }],
   });
@@ -154,8 +157,8 @@ test("sync pages imports, removes missing older posts only after complete paging
   await expect(t.action(api.sync.now, { secret: "wrong" })).rejects.toThrow(
     "Unauthorized",
   );
-  const first = await t.action(api.sync.now, { secret });
-  expect(await t.run((ctx) => ctx.db.get(missing))).toBeNull();
+  const first = await t.action(api.sync.now, {});
+  expect(await t.run(async (ctx) => ctx.db.get(missing))).toBeNull();
   expect(first).toEqual({
     imported: 2,
     removed: 1,
@@ -163,12 +166,12 @@ test("sync pages imports, removes missing older posts only after complete paging
     replies: 0,
     error: null,
   });
-  const posts = await t.query(api.posts.listQueue, { secret });
+  const posts = await t.query(api.posts.listQueue, {});
   expect(posts).toHaveLength(5);
   expect(posts.find((p) => p._id === recent)?.status.kind).toBe("published");
   expect(posts.find((p) => p._id === draft)?.status.kind).toBe("draft");
   expect(
-    await t.query(api.library.searchPosts, { secret, text: "deleted on Threads" }),
+    await t.query(api.library.searchPosts, { text: "deleted on Threads" }),
   ).toEqual([]);
   expect(posts.filter((p) => p.publishedIds[0] === "antre-root")).toHaveLength(
     1,
@@ -196,22 +199,25 @@ test("sync pages imports, removes missing older posts only after complete paging
       syncedAt: now,
     },
   });
-  expect(await t.action(internal.sync.run, {})).toEqual({
+  expect(
+    await t.action(internal.sync.run, { workspaceId: await workspaceIdOf(t) }),
+  ).toEqual({
     imported: 0,
     removed: 0,
     metricsUpdated: 3,
     replies: 0,
     error: null,
   });
-  expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(5);
+  expect(await t.query(api.posts.listQueue, {})).toHaveLength(5);
   expect(calls.filter((p) => p === "/v1.0/old-external/insights")).toHaveLength(
     1,
   );
-  expect(await t.run((ctx) => ctx.db.query("followers").collect())).toEqual([
-    expect.objectContaining({ at: now, count: 1234 }),
-  ]);
-  const absentDuringFailure = await t.run((ctx) =>
+  expect(
+    await t.run(async (ctx) => ctx.db.query("followers").collect()),
+  ).toEqual([expect.objectContaining({ at: now, count: 1234 })]);
+  const absentDuringFailure = await t.run(async (ctx) =>
     ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "absent during failed paging" }],
       publishedIds: ["absent-during-failure"],
       source: "agent",
@@ -222,25 +228,27 @@ test("sync pages imports, removes missing older posts only after complete paging
       },
     }),
   );
-  const beforeFailure = await t.query(api.posts.listQueue, { secret });
+  const beforeFailure = await t.query(api.posts.listQueue, {});
   pagingError = true;
-  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+  expect(await t.action(api.sync.now, {})).toMatchObject({
     imported: 0,
     removed: 0,
     error: expect.stringContaining("Paging failed"),
   });
-  expect(
-    (await t.query(api.posts.listQueue, { secret })).map((p) => p._id),
-  ).toEqual(beforeFailure.map((p) => p._id));
+  expect((await t.query(api.posts.listQueue, {})).map((p) => p._id)).toEqual(
+    beforeFailure.map((p) => p._id),
+  );
   pagingError = false;
-  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+  expect(await t.action(api.sync.now, {})).toMatchObject({
     imported: 0,
     removed: 1,
     error: null,
   });
-  expect(await t.run((ctx) => ctx.db.get(absentDuringFailure))).toBeNull();
+  expect(
+    await t.run(async (ctx) => ctx.db.get(absentDuringFailure)),
+  ).toBeNull();
   permissionError = true;
-  const result = await t.action(api.sync.now, { secret });
+  const result = await t.action(api.sync.now, {});
   expect(result).toMatchObject({
     imported: 1,
     metricsUpdated: 0,
@@ -248,7 +256,7 @@ test("sync pages imports, removes missing older posts only after complete paging
   });
   expect(result.error).not.toContain("test-token");
   expect(
-    (await t.query(api.posts.listQueue, { secret })).find(
+    (await t.query(api.posts.listQueue, {})).find(
       (p) => p.publishedIds[0] === "permission-post",
     ),
   ).toMatchObject({ source: "threads", status: { kind: "published" } });
@@ -256,20 +264,21 @@ test("sync pages imports, removes missing older posts only after complete paging
   permissionError = false;
   publishing = true;
   const startedAt = now - 30_000;
-  const inFlight = await t.run((ctx) =>
+  const inFlight = await t.run(async (ctx) =>
     ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "publishing-root" }],
       publishedIds: [],
       source: "agent",
       status: { kind: "publishing", at: startedAt, startedAt },
     }),
   );
-  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+  expect(await t.action(api.sync.now, {})).toMatchObject({
     imported: 1,
     removed: 3,
     error: null,
   });
-  const duringPublishing = await t.query(api.posts.listQueue, { secret });
+  const duringPublishing = await t.query(api.posts.listQueue, {});
   expect(duringPublishing).toHaveLength(5);
   expect(
     duringPublishing.filter((p) => p.publishedIds[0] === "publishing-root"),
@@ -297,11 +306,11 @@ test("sync pages imports, removes missing older posts only after complete paging
       permalink: "https://threads.net/publishing-root",
     },
   });
-  expect(await t.action(api.sync.now, { secret })).toMatchObject({
+  expect(await t.action(api.sync.now, {})).toMatchObject({
     imported: 0,
     error: null,
   });
-  const afterPublishing = await t.query(api.posts.listQueue, { secret });
+  const afterPublishing = await t.query(api.posts.listQueue, {});
   expect(afterPublishing).toHaveLength(5);
   expect(
     afterPublishing.filter((p) => p.publishedIds[0] === "publishing-root"),
@@ -311,13 +320,11 @@ test("sync pages imports, removes missing older posts only after complete paging
 });
 
 test("taxonomy and partial tagging span statuses; grouping computes mean engagement, null tags, minimum views, and follower bounds", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   await t.mutation(api.library.setTaxonomy, {
-    secret,
     entries: [{ dimension: "topic", code: "CUSTOM", name: "Old name" }],
   });
   await t.mutation(api.library.setTaxonomy, {
-    secret,
     entries: [
       {
         dimension: "topic",
@@ -327,7 +334,7 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
       },
     ],
   });
-  expect(await t.query(api.library.taxonomy, { secret })).toEqual([
+  expect(await t.query(api.library.taxonomy, {})).toEqual([
     expect.objectContaining({ code: "CUSTOM", name: "Creative testing" }),
   ]);
   const ids = await t.run(async (ctx) => {
@@ -341,6 +348,7 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
     ] as const) {
       ids.push(
         await ctx.db.insert("posts", {
+          workspaceId: await fixtureWorkspace(ctx),
           parts: [{ text }],
           publishedIds: [text],
           source: "threads",
@@ -363,27 +371,33 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
       );
     }
     await ctx.db.insert("followers", {
+      workspaceId: await fixtureWorkspace(ctx),
       at: Date.parse("2026-10-16T00:00:00Z"),
       count: 10,
     });
-    await ctx.db.insert("followers", { at: now, count: 20 });
-    await ctx.db.insert("followers", { at: now + 86400000, count: 30 });
+    await ctx.db.insert("followers", {
+      workspaceId: await fixtureWorkspace(ctx),
+      at: now,
+      count: 20,
+    });
+    await ctx.db.insert("followers", {
+      workspaceId: await fixtureWorkspace(ctx),
+      at: now + 86400000,
+      count: 30,
+    });
     return ids;
   });
   const draft = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "agent",
     parts: [{ text: "draft" }],
   });
   await t.mutation(api.library.tagPosts, {
-    secret,
     posts: [
       { id: ids[0], meta: { hook: "New hook" } },
       { id: draft, meta: { topic: "CUSTOM", notes: "draft notes" } },
     ],
   });
   const posts = await t.query(api.library.searchPosts, {
-    secret,
     status: "published",
     topic: "CUSTOM",
     text: "FIRST",
@@ -401,7 +415,6 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
     parts: [{ text: "first" }],
   });
   const result = await t.query(api.library.insights, {
-    secret,
     dimensions: ["topic", "angle"],
     since: "2026-10-18",
     until: "2026-10-18",
@@ -432,7 +445,6 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
   });
   expect(
     await t.query(api.library.searchPosts, {
-      secret,
       sort: "engagement",
       minViews: 50,
       limit: 1,
@@ -441,117 +453,200 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
 });
 
 test("own thread continuations do not inflate audience replies, engagement rankings, or insights after sync", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const cases = [
-    { root: "thread", parts: 3, rawReplies: 2, replies: 0, likes: 0, age: 600_000 },
-    { root: "single", parts: 1, rawReplies: 0, replies: 0, likes: 2, age: 660_000 },
-    { root: "audience", parts: 3, rawReplies: 3, replies: 1, likes: 0, age: 720_000 },
-    { root: "stale", parts: 3, rawReplies: 1, replies: 0, likes: 0, age: 31 * 86_400_000 },
+    {
+      root: "thread",
+      parts: 3,
+      rawReplies: 2,
+      replies: 0,
+      likes: 0,
+      age: 600_000,
+    },
+    {
+      root: "single",
+      parts: 1,
+      rawReplies: 0,
+      replies: 0,
+      likes: 2,
+      age: 660_000,
+    },
+    {
+      root: "audience",
+      parts: 3,
+      rawReplies: 3,
+      replies: 1,
+      likes: 0,
+      age: 720_000,
+    },
+    {
+      root: "stale",
+      parts: 3,
+      rawReplies: 1,
+      replies: 0,
+      likes: 0,
+      age: 31 * 86_400_000,
+    },
   ];
   const ids = await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "owner",
       username: "owner",
       accessToken: "test-token",
       tokenExpiresAt: now + 86_400_000,
       needsReconnect: false,
     });
-    return await Promise.all(cases.map((fixture) => ctx.db.insert("posts", {
-      parts: Array.from({ length: fixture.parts }, (_, i) => ({
-        text: `${fixture.root} part ${i + 1}`,
-      })),
-      publishedIds: Array.from({ length: fixture.parts }, (_, i) =>
-        i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}`,
+    return await Promise.all(
+      cases.map(async (fixture) =>
+        ctx.db.insert("posts", {
+          workspaceId: await fixtureWorkspace(ctx),
+          parts: Array.from({ length: fixture.parts }, (_, i) => ({
+            text: `${fixture.root} part ${i + 1}`,
+          })),
+          publishedIds: Array.from({ length: fixture.parts }, (_, i) =>
+            i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}`,
+          ),
+          source: "agent",
+          meta: { topic: "TOPIC" },
+          status: {
+            kind: "published",
+            at: now - fixture.age,
+            permalink: `https://threads.net/${fixture.root}`,
+          },
+          ...(fixture.root === "stale"
+            ? {
+                metrics: {
+                  views: 100,
+                  likes: 0,
+                  replies: 1,
+                  reposts: 0,
+                  quotes: 0,
+                  shares: 0,
+                  syncedAt: now - fixture.age + 60_000,
+                },
+              }
+            : {}),
+        }),
       ),
-      source: "agent",
-      meta: { topic: "TOPIC" },
-      status: {
-        kind: "published",
-        at: now - fixture.age,
-        permalink: `https://threads.net/${fixture.root}`,
-      },
-      ...(fixture.root === "stale" ? { metrics: {
-        views: 100, likes: 0, replies: 1, reposts: 0, quotes: 0, shares: 0,
-        syncedAt: now - fixture.age + 60_000,
-      } } : {}),
-    })));
+    );
   });
-  vi.stubGlobal("fetch", vi.fn(async (input: URL) => {
-    const url = new URL(input);
-    if (url.pathname === "/v1.0/me/threads")
-      return Response.json({ data: cases.map(({ root, age }) => ({
-        id: root,
-        text: `${root} part 1`,
-        timestamp: new Date(now - age).toISOString(),
-        permalink: `https://threads.net/${root}`,
-      })) });
-    if (url.pathname === "/v1.0/owner/threads_insights")
-      return Response.json({ data: [{ name: "followers_count", total_value: { value: 1 } }] });
-    const fixture = cases.find(({ root }) => url.pathname.startsWith(`/v1.0/${root}/`));
-    if (!fixture || fixture.root === "stale")
-      throw new Error(`Unexpected remote request ${url.pathname}`);
-    if (url.pathname.endsWith("/conversation"))
-      return Response.json({ data: [
-        ...Array.from({ length: fixture.parts - 1 }, (_, i) => ({
-          id: `${fixture.root}-part-${i + 2}`,
-          text: `${fixture.root} part ${i + 2}`,
-          username: "owner",
-          timestamp: new Date(now - fixture.age).toISOString(),
-          replied_to: { id: i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}` },
-        })),
-        ...(fixture.replies ? [{
-          id: `${fixture.root}-reader`,
-          text: "Audience reply",
-          username: "reader",
-          timestamp: new Date(now - 300_000).toISOString(),
-          replied_to: { id: fixture.root },
-        }] : []),
-      ] });
-    if (!url.pathname.endsWith("/insights"))
-      throw new Error(`Unexpected remote request ${url.pathname}`);
-    return Response.json({ data: [
-      { name: "views", values: [{ value: 100 }] },
-      { name: "likes", values: [{ value: fixture.likes }] },
-      { name: "replies", values: [{ value: fixture.rawReplies }] },
-      { name: "reposts", values: [{ value: 0 }] },
-      { name: "quotes", values: [{ value: 0 }] },
-      { name: "shares", values: [{ value: 0 }] },
-    ] });
-  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: URL) => {
+      const url = new URL(input);
+      if (url.pathname === "/v1.0/me/threads")
+        return Response.json({
+          data: cases.map(({ root, age }) => ({
+            id: root,
+            text: `${root} part 1`,
+            timestamp: new Date(now - age).toISOString(),
+            permalink: `https://threads.net/${root}`,
+          })),
+        });
+      if (url.pathname === "/v1.0/owner/threads_insights")
+        return Response.json({
+          data: [{ name: "followers_count", total_value: { value: 1 } }],
+        });
+      const fixture = cases.find(({ root }) =>
+        url.pathname.startsWith(`/v1.0/${root}/`),
+      );
+      if (!fixture || fixture.root === "stale")
+        throw new Error(`Unexpected remote request ${url.pathname}`);
+      if (url.pathname.endsWith("/conversation"))
+        return Response.json({
+          data: [
+            ...Array.from({ length: fixture.parts - 1 }, (_, i) => ({
+              id: `${fixture.root}-part-${i + 2}`,
+              text: `${fixture.root} part ${i + 2}`,
+              username: "owner",
+              timestamp: new Date(now - fixture.age).toISOString(),
+              replied_to: {
+                id: i === 0 ? fixture.root : `${fixture.root}-part-${i + 1}`,
+              },
+            })),
+            ...(fixture.replies
+              ? [
+                  {
+                    id: `${fixture.root}-reader`,
+                    text: "Audience reply",
+                    username: "reader",
+                    timestamp: new Date(now - 300_000).toISOString(),
+                    replied_to: { id: fixture.root },
+                  },
+                ]
+              : []),
+          ],
+        });
+      if (!url.pathname.endsWith("/insights"))
+        throw new Error(`Unexpected remote request ${url.pathname}`);
+      return Response.json({
+        data: [
+          { name: "views", values: [{ value: 100 }] },
+          { name: "likes", values: [{ value: fixture.likes }] },
+          { name: "replies", values: [{ value: fixture.rawReplies }] },
+          { name: "reposts", values: [{ value: 0 }] },
+          { name: "quotes", values: [{ value: 0 }] },
+          { name: "shares", values: [{ value: 0 }] },
+        ],
+      });
+    }),
+  );
   for (let run = 0; run < 2; run++) {
-    expect(await t.action(api.sync.now, { secret })).toEqual({
-      imported: 0, removed: 0, metricsUpdated: 3, replies: 5, error: null,
+    expect(await t.action(api.sync.now, {})).toEqual({
+      imported: 0,
+      removed: 0,
+      metricsUpdated: 3,
+      replies: 5,
+      error: null,
     });
-    const page = await t.query(api.library.page, { secret, view: "published" });
+    const page = await t.query(api.library.page, { view: "published" });
     const ranked = await t.query(api.library.page, {
-      secret, view: "published", sort: "engagement",
+      view: "published",
+      sort: "engagement",
     });
-    const search = await t.query(api.library.searchPosts, { secret, sort: "engagement" });
-    const full = await t.query(api.posts.getPosts, { secret, ids });
-    const insights = await t.query(api.library.insights, { secret, dimensions: ["topic"] });
-    expect((await t.query(api.replies.list, { secret })).replies).toMatchObject([
+    const search = await t.query(api.library.searchPosts, {
+      sort: "engagement",
+    });
+    const full = await t.query(api.posts.getPosts, { ids });
+    const insights = await t.query(api.library.insights, {
+      dimensions: ["topic"],
+    });
+    expect((await t.query(api.replies.list, {})).replies).toMatchObject([
       { username: "reader", text: "Audience reply" },
     ]);
     const order = [ids[1], ids[2], ids[0], ids[3]];
     expect.soft(ranked.items.map(({ id }) => id)).toEqual(order);
     expect.soft(search.map(({ id }) => id)).toEqual(order);
-    expect.soft(insights.groups).toEqual([{
-      tags: { topic: "TOPIC" }, count: 4, totalViews: 400, averageViews: 100,
-      averageEngagement: 0.0075, bestPostId: ids[1],
-    }]);
-    const stored = await t.run((ctx) => ctx.db.query("posts").collect());
+    expect.soft(insights.groups).toEqual([
+      {
+        tags: { topic: "TOPIC" },
+        count: 4,
+        totalViews: 400,
+        averageViews: 100,
+        averageEngagement: 0.0075,
+        bestPostId: ids[1],
+      },
+    ]);
+    const stored = await t.run(async (ctx) => ctx.db.query("posts").collect());
     for (const [i, fixture] of cases.entries()) {
       for (const result of [page.items, ranked.items, search, full.posts]) {
         const post = result.find((post) => post?.id === ids[i]);
-        expect.soft(post?.metrics?.replies, `${fixture.root} replies`).toBe(fixture.replies);
+        expect
+          .soft(post?.metrics?.replies, `${fixture.root} replies`)
+          .toBe(fixture.replies);
         if (post && "engagement" in post)
-          expect.soft(post.engagement, `${fixture.root} engagement`).toBe(
-            (fixture.likes + fixture.replies) / 100,
-          );
+          expect
+            .soft(post.engagement, `${fixture.root} engagement`)
+            .toBe((fixture.likes + fixture.replies) / 100);
       }
       expect(stored.find((post) => post._id === ids[i])?.metrics).toEqual({
-        views: 100, likes: fixture.likes, replies: fixture.rawReplies,
-        reposts: 0, quotes: 0, shares: 0,
+        views: 100,
+        likes: fixture.likes,
+        replies: fixture.rawReplies,
+        reposts: 0,
+        quotes: 0,
+        shares: 0,
         syncedAt: fixture.root === "stale" ? now - fixture.age + 60_000 : now,
       });
     }

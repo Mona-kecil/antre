@@ -1,15 +1,10 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import schema from "./schema";
 import { patchPost } from "./lib/postStore";
 import { storeTestImage } from "./testing/storage";
-
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
+import { fixtureWorkspace, ownerTest } from "./testing/workspace.test-support";
 
 beforeEach(() => {
-  vi.stubEnv("ANTRE_SECRET", secret);
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-18T04:00:00Z"));
 });
@@ -19,8 +14,8 @@ afterEach(() => {
 });
 
 test("post pages filter text and taxonomy, count facets before their own filter, and sort each view before paging", async () => {
-  const t = convexTest(schema, modules);
-  const imageId = await t.run((ctx) =>
+  const t = await ownerTest();
+  const imageId = await t.run(async (ctx) =>
     storeTestImage(ctx, new Blob(["PNG"], { type: "image/png" })),
   );
   const drafts = [];
@@ -40,7 +35,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     vi.advanceTimersByTime(1);
     drafts.push(
       await t.mutation(api.posts.createDraft, {
-        secret,
         source: "agent",
         parts: [{ text }, { text: "second part", imageId }],
         meta,
@@ -53,14 +47,13 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     ["publishing", 20],
   ] as const) {
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: kind }],
     });
     if (kind === "queued")
-      await t.mutation(api.posts.queue, { secret, id, at: Date.now() + at });
+      await t.mutation(api.posts.queue, { id, at: Date.now() + at });
     else
-      await t.run((ctx) =>
+      await t.run(async (ctx) =>
         patchPost(ctx, id, {
           status: { kind, at: Date.now() + at, startedAt: Date.now() },
         }),
@@ -76,6 +69,7 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     ])
       ids.push(
         await ctx.db.insert("posts", {
+          workspaceId: await fixtureWorkspace(ctx),
           parts: [{ text: `published ${at}` }],
           publishedIds: [String(at)],
           source: "threads",
@@ -96,6 +90,7 @@ test("post pages filter text and taxonomy, count facets before their own filter,
         }),
       );
     await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "failed" }],
       publishedIds: [],
       source: "agent",
@@ -104,7 +99,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     return ids;
   });
   const first = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     limit: 2,
   });
@@ -128,7 +122,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     ],
   });
   const next = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     offset: 2,
     limit: 2,
@@ -137,12 +130,11 @@ test("post pages filter text and taxonomy, count facets before their own filter,
   expect(next.total).toBe(5);
   expect(next.facets).toEqual(first.facets);
   expect(
-    await t.query(api.library.page, { secret, view: "drafts", offset: 10 }),
+    await t.query(api.library.page, { view: "drafts", offset: 10 }),
   ).toMatchObject({ total: 5, items: [], counts });
   expect(
     (
       await t.query(api.library.page, {
-        secret,
         view: "drafts",
         text: "NeEdLe",
       })
@@ -151,7 +143,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
   expect(
     (
       await t.query(api.library.page, {
-        secret,
         view: "drafts",
         text: "SECOND PART",
       })
@@ -159,7 +150,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
   ).toBe(5);
 
   const filtered = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     topic: "T01",
     angle: "A01",
@@ -174,7 +164,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     format: { F01: 1 },
   });
   const empty = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     topic: "T01",
     angle: "A01",
@@ -186,25 +175,22 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     angle: { A02: 1 },
     format: { F01: 1 },
   });
-  const queue = await t.query(api.library.page, { secret, view: "scheduled" });
+  const queue = await t.query(api.library.page, { view: "scheduled" });
   expect(queue.items.map((item) => item.id)).toEqual([...scheduled].reverse());
   expect(queue.items[0].status).toMatchObject({
     kind: "publishing",
     at: expect.any(Number),
     startedAt: expect.any(Number),
   });
+  expect((await t.query(api.library.page, { view: "failed" })).total).toBe(1);
   expect(
-    (await t.query(api.library.page, { secret, view: "failed" })).total,
-  ).toBe(1);
-  expect(
-    (await t.query(api.library.page, { secret, view: "published" })).items.map(
+    (await t.query(api.library.page, { view: "published" })).items.map(
       (item) => item.id,
     ),
   ).toEqual(published);
   expect(
     (
       await t.query(api.library.page, {
-        secret,
         view: "published",
         sort: "views",
         limit: 2,
@@ -212,7 +198,6 @@ test("post pages filter text and taxonomy, count facets before their own filter,
     ).items.map((item) => item.id),
   ).toEqual([published[1], published[2]]);
   const engaged = await t.query(api.library.page, {
-    secret,
     view: "published",
     sort: "engagement",
   });
@@ -226,38 +211,37 @@ test("post pages filter text and taxonomy, count facets before their own filter,
   ).rejects.toThrow("Unauthorized");
   for (const offset of [-1, 1.5])
     await expect(
-      t.query(api.library.page, { secret, view: "drafts", offset }),
+      t.query(api.library.page, { view: "drafts", offset }),
     ).rejects.toThrow("Offset");
   for (const limit of [0, 1.5, 101])
     await expect(
-      t.query(api.library.page, { secret, view: "drafts", limit }),
+      t.query(api.library.page, { view: "drafts", limit }),
     ).rejects.toThrow("Limit");
   await expect(
-    t.query(api.library.page, { secret, view: "drafts", sort: "views" }),
+    t.query(api.library.page, { view: "drafts", sort: "views" }),
   ).rejects.toThrow("published view");
 });
 
 test("post pages default to 25 rows, allow 100, and break tied dates consistently", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   await t.run(async (ctx) => {
     for (let i = 0; i < 102; i++)
       await ctx.db.insert("posts", {
+        workspaceId: await fixtureWorkspace(ctx),
         parts: [{ text: String(i) }],
         publishedIds: [],
         source: "agent",
         status: { kind: "draft" },
       });
   });
-  const defaults = await t.query(api.library.page, { secret, view: "drafts" });
+  const defaults = await t.query(api.library.page, { view: "drafts" });
   expect(defaults.items).toHaveLength(25);
   expect(defaults.total).toBe(102);
   const first = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     limit: 100,
   });
   const last = await t.query(api.library.page, {
-    secret,
     view: "drafts",
     offset: 100,
     limit: 100,

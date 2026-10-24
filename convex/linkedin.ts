@@ -1,24 +1,27 @@
 import { v } from "convex/values";
+import { z } from "zod";
+import { escapeLinkedInText, linkedinTextSchema } from "../src/lib/linkedin";
+import { futureLocalDay } from "../src/lib/timezone";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import {
   internalAction,
   internalMutation,
   internalQuery,
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
 } from "./_generated/server";
-import { withSecret } from "./auth";
+import type {
+  OwnedMutationCtx as MutationCtx,
+  OwnedActionCtx,
+  OwnedQueryCtx as QueryCtx,
+} from "./access";
+import { ownedRow, workspaceContext } from "./access";
+import { ownerAction, ownerMutation, ownerQuery } from "./auth";
 import { nextSlot, validateSettings, validateTime } from "./lib/scheduling";
 import { queueSettings } from "./schema";
-import { escapeLinkedInText, linkedinTextSchema } from "../src/lib/linkedin";
 
 type Post = Doc<"linkedinPosts">;
 type Settings = Omit<Doc<"linkedinSettings">, "_id" | "_creationTime">;
 const postId = { id: v.id("linkedinPosts") };
-const DAY = 86_400_000;
 const UNKNOWN =
   "LinkedIn may have published this post. Check your profile before retrying; another attempt may create a duplicate.";
 const defaultSettings = {
@@ -56,8 +59,15 @@ function content(text: string, topic?: string, notes?: string) {
 }
 
 async function settingsFor(ctx: QueryCtx): Promise<Settings> {
-  const row = await ctx.db.query("linkedinSettings").unique();
-  if (!row) return defaultSettings;
+  const row = await ctx.db
+    .query("linkedinSettings")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+    .unique();
+  if (!row) {
+    const workspace = await ctx.db.get(ctx.workspaceId);
+    if (!workspace) throw new Error("Workspace unavailable");
+    return { ...defaultSettings, timeZone: workspace.timeZone };
+  }
   return {
     windows: row.windows,
     intervalMinutes: row.intervalMinutes,
@@ -74,8 +84,9 @@ async function active(ctx: QueryCtx) {
       (["queued", "publishing", "held", "published"] as const).map((kind) =>
         ctx.db
           .query("linkedinPosts")
-          .withIndex("by_kind_at", (q) =>
+          .withIndex("workspace_by_kind_at", (q) =>
             q
+              .eq("workspaceId", ctx.workspaceId)
               .eq("status.kind", kind)
               .gte("status.at", kind === "published" ? Date.now() : -Infinity),
           )
@@ -186,9 +197,11 @@ async function releaseAuthHeld(ctx: MutationCtx) {
     if (post.status.kind === "draft") continue;
     let at = nextSlot(settings, taken, after);
     if (settings.gapPolicy === "keepTimes") {
-      const original =
-        post.status.at +
-        DAY * Math.max(0, Math.floor((Date.now() - post.status.at) / DAY) + 1);
+      const original = futureLocalDay(
+        post.status.at,
+        Date.now(),
+        settings.timeZone,
+      );
       at =
         original > after && !taken.has(original)
           ? original
@@ -211,8 +224,44 @@ async function holdAuth(
   });
 }
 
-async function beginPublishing(ctx: MutationCtx, post: Post, at: number) {
-  const account = await ctx.db.query("linkedinAccount").unique();
+async function beginPublishing(
+  base: import("./_generated/server").MutationCtx,
+  post: Post,
+  at: number,
+) {
+  if (!post.workspaceId) {
+    await base.db.patch(post._id, {
+      status: {
+        kind: "held",
+        at,
+        heldAt: Date.now(),
+        reason: "auth",
+        error: "Unbound workspace",
+      },
+    });
+    console.error("Unbound LinkedIn post", { id: post._id });
+    return;
+  }
+  const workspace = await base.db.get(post.workspaceId);
+  if (!workspace || !workspace.ownerId) {
+    await base.db.patch(post._id, {
+      status: {
+        kind: "held",
+        at,
+        heldAt: Date.now(),
+        reason: "auth",
+        error: "Unbound workspace",
+      },
+    });
+    console.error("Unbound LinkedIn post", { id: post._id });
+    return;
+  }
+  if (workspace.state !== "active") return;
+  const ctx = await workspaceContext(base, post.workspaceId);
+  const account = await ctx.db
+    .query("linkedinAccount")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+    .unique();
   if (
     !account ||
     account.needsReconnect ||
@@ -234,129 +283,179 @@ async function beginPublishing(ctx: MutationCtx, post: Post, at: number) {
   });
 }
 
-export const connect = mutation(
-  withSecret(
-    {
-      memberId: v.string(),
-      name: v.string(),
-      accessToken: v.string(),
-      tokenExpiresAt: v.number(),
-    },
-    async (ctx: MutationCtx, args) => {
-      if (
-        !args.memberId.trim() ||
-        !args.name.trim() ||
-        !args.accessToken ||
-        !Number.isFinite(args.tokenExpiresAt) ||
-        args.tokenExpiresAt <= Date.now()
-      )
-        throw new Error("LinkedIn connection is invalid or expired");
-      const account = await ctx.db.query("linkedinAccount").unique();
-      if (account && account.memberId !== args.memberId)
-        throw new Error("Reconnect the same LinkedIn member");
-      const value = {
-        memberId: args.memberId,
-        name: args.name,
-        accessToken: args.accessToken,
-        tokenExpiresAt: args.tokenExpiresAt,
-        needsReconnect: false,
-      };
-      if (account) await ctx.db.patch(account._id, value);
-      else await ctx.db.insert("linkedinAccount", value);
-      await releaseAuthHeld(ctx);
-    },
-  ),
+const connectionArgs = {
+  memberId: v.string(),
+  name: v.string(),
+  accessToken: v.string(),
+  tokenExpiresAt: v.number(),
+};
+export const connect = ownerAction(
+  connectionArgs,
+  async (ctx: OwnedActionCtx, args): Promise<void> => {
+    if (ctx.via !== "user") throw new Error("User session required");
+    if (
+      !args.accessToken ||
+      !Number.isFinite(args.tokenExpiresAt) ||
+      args.tokenExpiresAt <= Date.now()
+    )
+      throw new Error("LinkedIn connection is invalid or expired");
+    let profile: { sub: string; name: string };
+    try {
+      const response = await fetch("https://api.linkedin.com/v2/userinfo", {
+        headers: { Authorization: `Bearer ${args.accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error("Invalid token");
+      profile = z
+        .object({ sub: z.string().min(1), name: z.string().min(1) })
+        .parse(await response.json());
+    } catch {
+      throw new Error("LinkedIn token could not be verified");
+    }
+    if (profile.sub !== args.memberId)
+      throw new Error("LinkedIn token identity does not match");
+    await ctx.runMutation(internal.linkedin.attach, {
+      workspaceId: ctx.workspaceId,
+      ...args,
+      memberId: profile.sub,
+      name: profile.name,
+    });
+  },
 );
+export const attach = internalMutation({
+  args: { ...connectionArgs, workspaceId: v.id("workspaces") },
+  handler: async (base, args) => {
+    const ctx = await workspaceContext(base, args.workspaceId);
+    if (
+      !args.memberId.trim() ||
+      !args.name.trim() ||
+      !args.accessToken ||
+      !Number.isFinite(args.tokenExpiresAt) ||
+      args.tokenExpiresAt <= Date.now()
+    )
+      throw new Error("LinkedIn connection is invalid or expired");
+    const existingRemote = await ctx.db
+      .query("linkedinAccount")
+      .withIndex("by_member", (q) => q.eq("memberId", args.memberId))
+      .unique();
+    if (existingRemote && existingRemote.workspaceId !== ctx.workspaceId)
+      throw new Error("Platform account already connected");
+    const account = await ctx.db
+      .query("linkedinAccount")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+      .unique();
+    if (account && account.memberId !== args.memberId)
+      throw new Error("Reconnect the same LinkedIn member");
+    const value = {
+      memberId: args.memberId,
+      name: args.name,
+      accessToken: args.accessToken,
+      tokenExpiresAt: args.tokenExpiresAt,
+      needsReconnect: false,
+    };
+    if (account) await ctx.db.patch(account._id, value);
+    else
+      await ctx.db.insert("linkedinAccount", {
+        ...value,
+        workspaceId: ctx.workspaceId,
+      });
+    await releaseAuthHeld(ctx);
+  },
+});
 
-export const current = query(
-  withSecret({}, async (ctx: QueryCtx) =>
-    publicAccount(await ctx.db.query("linkedinAccount").unique()),
+export const current = ownerQuery({}, async (ctx: QueryCtx) =>
+  publicAccount(
+    await ctx.db
+      .query("linkedinAccount")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+      .unique(),
   ),
 );
-export const getSettings = query(
-  withSecret({}, (ctx: QueryCtx) => settingsFor(ctx)),
-);
-export const updateSettings = mutation(
-  withSecret(
-    {
-      ...queueSettings,
-      topics: v.optional(v.array(v.string())),
-      writingInstructions: v.optional(v.string()),
-    },
-    async (ctx: MutationCtx, args) => {
-      const previous = await settingsFor(ctx);
-      const topics =
-        args.topics?.map((topic) => topic.trim()).filter(Boolean) ??
-        previous.topics;
-      const writingInstructions =
-        args.writingInstructions?.trim() ?? previous.writingInstructions;
-      if (
-        topics.length > 100 ||
-        topics.some((topic) => [...topic].length > 100) ||
-        new Set(topics).size !== topics.length
-      )
-        throw new Error(
-          "Use up to 100 distinct LinkedIn topics, each 1–100 characters",
-        );
-      if ([...writingInstructions].length > 10000)
-        throw new Error(
-          "Use up to 10,000 characters for LinkedIn writing instructions",
-        );
-      const value = {
-        ...validateSettings({
-          windows: args.windows,
-          intervalMinutes: args.intervalMinutes,
-          timeZone: args.timeZone,
-          gapPolicy: args.gapPolicy,
-        }),
-        topics,
-        writingInstructions,
-      };
-      const row = await ctx.db.query("linkedinSettings").unique();
-      if (row) await ctx.db.replace(row._id, value);
-      else await ctx.db.insert("linkedinSettings", value);
-      return value;
-    },
-  ),
-);
-
-export const createDraft = mutation(
-  withSecret(
-    {
-      text: v.string(),
-      topic: v.optional(v.string()),
-      notes: v.optional(v.string()),
-      source: v.union(v.literal("web"), v.literal("agent")),
-    },
-    (ctx: MutationCtx, args) =>
-      ctx.db.insert("linkedinPosts", {
-        ...content(args.text, args.topic, args.notes),
-        source: args.source,
-        status: { kind: "draft" },
-      }),
-  ),
-);
-export const updateDraft = mutation(
-  withSecret(
-    {
-      ...postId,
-      text: v.string(),
-      topic: v.optional(v.string()),
-      notes: v.optional(v.string()),
-    },
-    async (ctx: MutationCtx, args) => {
-      const post = await ctx.db.get(args.id);
-      if (
-        !post ||
-        (post.status.kind !== "draft" && post.status.kind !== "failed")
-      )
-        throw new Error("Only drafts and failed LinkedIn posts can be edited");
-      await ctx.db.patch(
-        args.id,
-        content(args.text, args.topic ?? post.topic, args.notes ?? post.notes),
+export const getSettings = ownerQuery({}, (ctx: QueryCtx) => settingsFor(ctx));
+export const updateSettings = ownerMutation(
+  {
+    ...queueSettings,
+    topics: v.optional(v.array(v.string())),
+    writingInstructions: v.optional(v.string()),
+  },
+  async (ctx: MutationCtx, args) => {
+    const previous = await settingsFor(ctx);
+    const topics =
+      args.topics?.map((topic) => topic.trim()).filter(Boolean) ??
+      previous.topics;
+    const writingInstructions =
+      args.writingInstructions?.trim() ?? previous.writingInstructions;
+    if (
+      topics.length > 100 ||
+      topics.some((topic) => [...topic].length > 100) ||
+      new Set(topics).size !== topics.length
+    )
+      throw new Error(
+        "Use up to 100 distinct LinkedIn topics, each 1–100 characters",
       );
-    },
-  ),
+    if ([...writingInstructions].length > 10000)
+      throw new Error(
+        "Use up to 10,000 characters for LinkedIn writing instructions",
+      );
+    const value = {
+      ...validateSettings({
+        windows: args.windows,
+        intervalMinutes: args.intervalMinutes,
+        timeZone: args.timeZone,
+        gapPolicy: args.gapPolicy,
+      }),
+      topics,
+      writingInstructions,
+    };
+    const row = await ctx.db
+      .query("linkedinSettings")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+      .unique();
+    if (row)
+      await ctx.db.replace(row._id, { ...value, workspaceId: ctx.workspaceId });
+    else
+      await ctx.db.insert("linkedinSettings", {
+        ...value,
+        workspaceId: ctx.workspaceId,
+      });
+    return value;
+  },
+);
+
+export const createDraft = ownerMutation(
+  {
+    text: v.string(),
+    topic: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    source: v.union(v.literal("web"), v.literal("agent")),
+  },
+  (ctx: MutationCtx, args) =>
+    ctx.db.insert("linkedinPosts", {
+      workspaceId: ctx.workspaceId,
+      ...content(args.text, args.topic, args.notes),
+      source: args.source,
+      status: { kind: "draft" },
+    }),
+);
+export const updateDraft = ownerMutation(
+  {
+    ...postId,
+    text: v.string(),
+    topic: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+  async (ctx: MutationCtx, args) => {
+    const post = await ownedRow(ctx, args.id);
+    if (
+      !post ||
+      (post.status.kind !== "draft" && post.status.kind !== "failed")
+    )
+      throw new Error("Only drafts and failed LinkedIn posts can be edited");
+    await ctx.db.patch(
+      args.id,
+      content(args.text, args.topic ?? post.topic, args.notes ?? post.notes),
+    );
+  },
 );
 
 function item(post: Post) {
@@ -372,12 +471,10 @@ function item(post: Post) {
         : null,
   };
 }
-export const get = query(
-  withSecret(postId, async (ctx: QueryCtx, { id }) => {
-    const post = await ctx.db.get(id);
-    return post ? item(post) : null;
-  }),
-);
+export const get = ownerQuery(postId, async (ctx: QueryCtx, { id }) => {
+  const post = await ownedRow(ctx, id);
+  return post ? item(post) : null;
+});
 
 const viewFor = (post: Post) =>
   post.status.kind === "draft"
@@ -387,72 +484,79 @@ const viewFor = (post: Post) =>
       : post.status.kind === "failed"
         ? "failed"
         : "scheduled";
-export const list = query(
-  withSecret(
-    {
-      view: v.union(
-        v.literal("drafts"),
-        v.literal("scheduled"),
-        v.literal("published"),
-        v.literal("failed"),
+export const list = ownerQuery(
+  {
+    view: v.union(
+      v.literal("drafts"),
+      v.literal("scheduled"),
+      v.literal("published"),
+      v.literal("failed"),
+    ),
+    offset: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  async (ctx: QueryCtx, args) => {
+    const offset = args.offset ?? 0;
+    const limit = args.limit ?? 25;
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    )
+      throw new Error("Use a nonnegative offset and a limit between 1 and 100");
+    const posts = await ctx.db
+      .query("linkedinPosts")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+      .collect();
+    const counts = { drafts: 0, scheduled: 0, published: 0, failed: 0 };
+    for (const post of posts) counts[viewFor(post)]++;
+    const selected = posts
+      .filter((post) => viewFor(post) === args.view)
+      .sort((a, b) => (args.view === "scheduled" ? 1 : -1) * order(a, b));
+    const settings = await settingsFor(ctx);
+    return {
+      items: selected.slice(offset, offset + limit).map(item),
+      total: selected.length,
+      counts,
+      account: publicAccount(
+        await ctx.db
+          .query("linkedinAccount")
+          .withIndex("by_workspace", (q) =>
+            q.eq("workspaceId", ctx.workspaceId),
+          )
+          .unique(),
       ),
-      offset: v.optional(v.number()),
-      limit: v.optional(v.number()),
-    },
-    async (ctx: QueryCtx, args) => {
-      const offset = args.offset ?? 0;
-      const limit = args.limit ?? 25;
-      if (
-        !Number.isSafeInteger(offset) ||
-        offset < 0 ||
-        !Number.isSafeInteger(limit) ||
-        limit < 1 ||
-        limit > 100
-      )
-        throw new Error(
-          "Use a nonnegative offset and a limit between 1 and 100",
-        );
-      const posts = await ctx.db.query("linkedinPosts").collect();
-      const counts = { drafts: 0, scheduled: 0, published: 0, failed: 0 };
-      for (const post of posts) counts[viewFor(post)]++;
-      const selected = posts
-        .filter((post) => viewFor(post) === args.view)
-        .sort((a, b) => (args.view === "scheduled" ? 1 : -1) * order(a, b));
-      const settings = await settingsFor(ctx);
-      return {
-        items: selected.slice(offset, offset + limit).map(item),
-        total: selected.length,
-        counts,
-        account: publicAccount(await ctx.db.query("linkedinAccount").unique()),
-        settings,
-        nextSlot: nextSlot(settings, occupied(posts), Date.now()),
-      };
-    },
-  ),
+      settings,
+      nextSlot: nextSlot(settings, occupied(posts), Date.now()),
+    };
+  },
 );
 
-export const queue = mutation(
-  withSecret(
-    { ...postId, at: v.optional(v.number()) },
-    async (ctx: MutationCtx, { id, at: requested }) => {
-      const post = await ctx.db.get(id);
-      if (
-        !post ||
-        (post.status.kind !== "draft" && post.status.kind !== "failed")
-      )
-        throw new Error("Only drafts and failed LinkedIn posts can be queued");
-      const taken = occupied(await active(ctx));
-      const at =
-        requested ?? nextSlot(await settingsFor(ctx), taken, Date.now());
-      validateTime(at, taken);
-      await place(ctx, post, at, requested !== undefined);
-      return at;
-    },
-  ),
+export const queue = ownerMutation(
+  { ...postId, at: v.optional(v.number()) },
+  async (ctx: MutationCtx, { id, at: requested }) => {
+    const post = await ownedRow(ctx, id);
+    if (
+      !post ||
+      (post.status.kind !== "draft" && post.status.kind !== "failed")
+    )
+      throw new Error("Only drafts and failed LinkedIn posts can be queued");
+    const scheduled = await active(ctx);
+    if (scheduled.filter((p) => p.status.kind !== "published").length >= 500)
+      throw new Error("Queue limit reached");
+    const taken = occupied(scheduled);
+    const at = requested ?? nextSlot(await settingsFor(ctx), taken, Date.now());
+    validateTime(at, taken);
+    await place(ctx, post, at, requested !== undefined);
+    return at;
+  },
 );
-export const unqueue = mutation(
-  withSecret(postId, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
+export const unqueue = ownerMutation(
+  postId,
+  async (ctx: MutationCtx, { id }) => {
+    const post = await ownedRow(ctx, id);
     if (
       !post ||
       (post.status.kind !== "queued" &&
@@ -464,11 +568,12 @@ export const unqueue = mutation(
     const at = post.status.at;
     await ctx.db.patch(id, { status: { kind: "draft" } });
     await compact(ctx, at);
-  }),
+  },
 );
-export const deletePost = mutation(
-  withSecret(postId, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
+export const deletePost = ownerMutation(
+  postId,
+  async (ctx: MutationCtx, { id }) => {
+    const post = await ownedRow(ctx, id);
     if (!post) throw new Error("LinkedIn post not found");
     if (post.status.kind === "publishing")
       throw new Error("Cannot delete a publishing LinkedIn post");
@@ -476,11 +581,12 @@ export const deletePost = mutation(
       await ctx.scheduler.cancel(post.status.jobId);
     await ctx.db.delete(id);
     if (post.status.kind === "queued") await compact(ctx, post.status.at);
-  }),
+  },
 );
-export const publishNow = mutation(
-  withSecret(postId, async (ctx: MutationCtx, { id }) => {
-    const post = await ctx.db.get(id);
+export const publishNow = ownerMutation(
+  postId,
+  async (ctx: MutationCtx, { id }) => {
+    const post = await ownedRow(ctx, id);
     if (
       !post ||
       post.status.kind === "publishing" ||
@@ -493,35 +599,27 @@ export const publishNow = mutation(
       await ctx.scheduler.cancel(post.status.jobId);
     await beginPublishing(ctx, post, Date.now());
     if (post.status.kind === "queued") await compact(ctx, post.status.at);
-  }),
+  },
 );
-export const retry = mutation(
-  withSecret(
-    {
-      ...postId,
-      confirmDuplicateRisk: v.optional(v.boolean()),
-      expectedStartedAt: v.optional(v.number()),
-    },
-    async (
-      ctx: MutationCtx,
-      { id, confirmDuplicateRisk, expectedStartedAt },
-    ) => {
-      const post = await ctx.db.get(id);
-      if (
-        !post ||
-        (post.status.kind !== "failed" && post.status.kind !== "held")
-      )
-        throw new Error("Only failed or held LinkedIn posts can be retried");
-      if (
-        post.status.kind === "held" &&
-        post.status.reason === "unknown" &&
-        (confirmDuplicateRisk !== true ||
-          expectedStartedAt !== post.status.startedAt)
-      )
-        throw new Error(UNKNOWN);
-      await beginPublishing(ctx, post, Date.now());
-    },
-  ),
+export const retry = ownerMutation(
+  {
+    ...postId,
+    confirmDuplicateRisk: v.optional(v.boolean()),
+    expectedStartedAt: v.optional(v.number()),
+  },
+  async (ctx: MutationCtx, { id, confirmDuplicateRisk, expectedStartedAt }) => {
+    const post = await ownedRow(ctx, id);
+    if (!post || (post.status.kind !== "failed" && post.status.kind !== "held"))
+      throw new Error("Only failed or held LinkedIn posts can be retried");
+    if (
+      post.status.kind === "held" &&
+      post.status.reason === "unknown" &&
+      (confirmDuplicateRisk !== true ||
+        expectedStartedAt !== post.status.startedAt)
+    )
+      throw new Error(UNKNOWN);
+    await beginPublishing(ctx, post, Date.now());
+  },
 );
 
 export const fire = internalMutation({
@@ -536,21 +634,39 @@ export const fire = internalMutation({
     )
       return;
     await beginPublishing(ctx, post, post.status.at);
-    if ((await ctx.db.get(id))?.status.kind === "held")
-      await compact(ctx, post.status.at);
+    if (
+      post.workspaceId &&
+      (await ctx.db.get(post.workspaceId))?.ownerId &&
+      (await ctx.db.get(post.workspaceId))?.state === "active" &&
+      (await ctx.db.get(id))?.status.kind === "held"
+    )
+      await compact(
+        await workspaceContext(ctx, post.workspaceId),
+        post.status.at,
+      );
   },
 });
 
 export const publishingInput = internalQuery({
   args: postId,
-  handler: async (ctx, { id }) => ({
-    post: await ctx.db.get(id),
-    account: await ctx.db.query("linkedinAccount").unique(),
-  }),
+  handler: async (ctx, { id }) => {
+    const post = await ctx.db.get(id);
+    const workspace = post?.workspaceId && (await ctx.db.get(post.workspaceId));
+    const account =
+      workspace?.state === "active" && workspace.ownerId
+        ? await ctx.db
+            .query("linkedinAccount")
+            .withIndex("by_workspace", (q) =>
+              q.eq("workspaceId", workspace._id),
+            )
+            .unique()
+        : null;
+    return { post, account };
+  },
 });
 export const claimDispatch = internalMutation({
-  args: { ...postId, startedAt: v.number() },
-  handler: async (ctx, { id, startedAt }) => {
+  args: { ...postId, startedAt: v.number(), expectedToken: v.string() },
+  handler: async (ctx, { id, startedAt, expectedToken }) => {
     const post = await ctx.db.get(id);
     if (
       !post ||
@@ -559,6 +675,34 @@ export const claimDispatch = internalMutation({
       post.status.dispatchedAt !== undefined
     )
       return false;
+    const workspace = post.workspaceId && (await ctx.db.get(post.workspaceId));
+    const account =
+      workspace?.state === "active" && workspace.ownerId
+        ? await ctx.db
+            .query("linkedinAccount")
+            .withIndex("by_workspace", (q) =>
+              q.eq("workspaceId", workspace._id),
+            )
+            .unique()
+        : null;
+    if (
+      !account ||
+      account.needsReconnect ||
+      !account.accessToken ||
+      account.tokenExpiresAt <= Date.now() ||
+      account.accessToken !== expectedToken
+    ) {
+      await ctx.db.patch(id, {
+        status: {
+          kind: "held",
+          at: post.status.at,
+          heldAt: Date.now(),
+          reason: "auth",
+          error: "LinkedIn account needs reconnecting",
+        },
+      });
+      return false;
+    }
     await ctx.db.patch(id, {
       status: { ...post.status, dispatchedAt: Date.now() },
     });
@@ -615,20 +759,39 @@ export const complete = internalMutation({
           error: `${result.error} ${UNKNOWN}`,
         },
       });
-      await compact(ctx, at);
+      if (
+        post.workspaceId &&
+        (await ctx.db.get(post.workspaceId))?.state === "active"
+      )
+        await compact(await workspaceContext(ctx, post.workspaceId), at);
     } else {
-      const account = await ctx.db.query("linkedinAccount").unique();
+      const account = await ctx.db
+        .query("linkedinAccount")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", post.workspaceId))
+        .unique();
       if (account?.accessToken === expectedToken)
         await ctx.db.patch(account._id, { needsReconnect: true });
-      await holdAuth(ctx, post, at, result.error);
-      await compact(ctx, at);
+      await ctx.db.patch(id, {
+        status: {
+          kind: "held",
+          at,
+          heldAt: Date.now(),
+          reason: "auth",
+          error: result.error,
+        },
+      });
+      if (
+        post.workspaceId &&
+        (await ctx.db.get(post.workspaceId))?.state === "active"
+      )
+        await compact(await workspaceContext(ctx, post.workspaceId), at);
       if (
         account &&
         account.accessToken !== expectedToken &&
         !account.needsReconnect &&
         account.tokenExpiresAt > Date.now()
       )
-        await releaseAuthHeld(ctx);
+        await releaseAuthHeld(await workspaceContext(ctx, post.workspaceId));
     }
   },
 });
@@ -678,6 +841,7 @@ export const publish = internalAction({
       !(await ctx.runMutation(internal.linkedin.claimDispatch, {
         id,
         startedAt,
+        expectedToken: account.accessToken,
       }))
     )
       return;
@@ -748,6 +912,10 @@ export const sweepStuck = internalMutation({
       .withIndex("by_kind_at", (q) => q.eq("status.kind", "publishing"))
       .collect();
     for (const post of posts) {
+      const workspace =
+        post.workspaceId && (await ctx.db.get(post.workspaceId));
+      if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+        continue;
       if (
         post.status.kind !== "publishing" ||
         post.status.startedAt > Date.now() - 15 * 60_000
@@ -766,7 +934,10 @@ export const sweepStuck = internalMutation({
             error: UNKNOWN,
           },
         });
-        await compact(ctx, post.status.at);
+        await compact(
+          await workspaceContext(ctx, post.workspaceId),
+          post.status.at,
+        );
       }
     }
   },
