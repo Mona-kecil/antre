@@ -689,8 +689,7 @@ export const claimDispatch = internalMutation({
       !account ||
       account.needsReconnect ||
       !account.accessToken ||
-      account.tokenExpiresAt <= Date.now() ||
-      account.accessToken !== expectedToken
+      account.tokenExpiresAt <= Date.now()
     ) {
       await ctx.db.patch(id, {
         status: {
@@ -701,6 +700,10 @@ export const claimDispatch = internalMutation({
           error: "LinkedIn account needs reconnecting",
         },
       });
+      return false;
+    }
+    if (account.accessToken !== expectedToken) {
+      await beginPublishing(ctx, post, post.status.at);
       return false;
     }
     await ctx.db.patch(id, {

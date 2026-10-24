@@ -47,6 +47,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test("reconnect before dispatch publishes the unsent attempt with the replacement token", async () => {
+  const { t, draft, get } = await setup();
+  const id = await draft();
+  await t.mutation(api.linkedin.publishNow, { id });
+  const original = await t.query(internal.linkedin.publishingInput, { id });
+  if (original.post?.status.kind !== "publishing" || !original.account)
+    throw new Error("Expected an undispatched attempt");
+  await connectLinkedin(t, { ...account, accessToken: "replacement" });
+  expect(await t.mutation(internal.linkedin.claimDispatch, {
+    id,
+    startedAt: original.post.status.startedAt,
+    expectedToken: original.account.accessToken,
+  })).toBe(false);
+  expect((await get(id))?.status.kind).toBe("publishing");
+  const publish = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer replacement");
+    return new Response(null, { status: 201, headers: { "x-restli-id": "urn:li:share:123" } });
+  });
+  vi.stubGlobal("fetch", publish);
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect((await get(id))?.status).toMatchObject({ kind: "published", urn: "urn:li:share:123" });
+});
+
 test("connection claims one member, returns no token and preserves separate Threads ownership", async () => {
   const { t } = await setup();
   await connectThreads(t, {

@@ -3,10 +3,9 @@ import { z } from "zod";
 
 const optional = { schema: z.string().optional() };
 const optionalUrl = {
-  schema: z.preprocess(
-    (value) => value === "" ? undefined : value,
-    z.url().optional(),
-  ),
+  schema: z.string().optional()
+    .transform((value) => value === "" ? undefined : value)
+    .pipe(z.url().optional()),
 };
 
 export const variables = defineEnvVars({

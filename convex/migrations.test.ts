@@ -263,3 +263,37 @@ test("bounded migration resumes through row tagging and stats pages without doub
     (await owner.query(api.library.page, { view: "drafts" })).counts.drafts,
   ).toBe(251);
 });
+
+test("a completed migration rebuilds indexes, assets and counts after another full batch arrives", async () => {
+  const root = convexTest(schema, modules);
+  expect((await root.mutation(internal.migrations.backfill, {})).done).toBe(true);
+  const imageId = await root.run(async (ctx) => {
+    const imageId = await ctx.storage.store(new Blob(["legacy image"], { type: "image/png" }));
+    for (let index = 0; index < 100; index++) {
+      await ctx.db.insert("posts", {
+        source: "agent",
+        parts: [{ text: `restored-${index}`, ...(index === 0 ? { imageId } : {}) }],
+        publishedIds: [],
+        status: { kind: "draft" },
+      });
+    }
+    return imageId;
+  });
+  let result = await root.mutation(internal.migrations.backfill, {});
+  expect(result).toMatchObject({ patched: 100, done: false });
+  for (let round = 0; !result.done && round < 6; round++)
+    result = await root.mutation(internal.migrations.backfill, {});
+  expect(result.done).toBe(true);
+  const state = await root.run(async (ctx) => ({
+    posts: await ctx.db.query("posts").collect(),
+    stats: await ctx.db.query("postStats").unique(),
+    asset: await ctx.db.query("assets").withIndex("by_storageId", q => q.eq("storageId", imageId)).unique(),
+  }));
+  expect(state.posts).toHaveLength(100);
+  expect(state.posts.every(post => post.libraryIndexed && post.workspaceId === result.workspaceId)).toBe(true);
+  expect(state.stats?.counts.drafts).toBe(100);
+  expect(state.asset?.workspaceId).toBe(result.workspaceId);
+  expect(await root.mutation(internal.migrations.backfill, {})).toMatchObject({
+    patched: 0, indexed: 0, registered: 0, done: true,
+  });
+});

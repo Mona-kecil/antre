@@ -52,89 +52,87 @@ export const backfill = internalMutation({
       .unique();
     let registered = 0;
     let indexed = 0;
-    if (done) {
+    if (!state || patched > 0) {
       const statsRows = await ctx.db
         .query("postStats")
         .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
         .collect();
-      if (!state || (patched && state.phase === "done")) {
-        const empty = {
+      const empty = {
+        workspaceId,
+        counts: { drafts: 0, scheduled: 0, published: 0, failed: 0 },
+        publishedFacets: [],
+      };
+      if (statsRows[0]) await ctx.db.replace(statsRows[0]._id, empty);
+      else await ctx.db.insert("postStats", empty);
+      for (const duplicate of statsRows.slice(1))
+        await ctx.db.delete(duplicate._id);
+      if (state) {
+        await ctx.db.patch(state._id, { phase: "posts", cursor: null });
+        state = { ...state, phase: "posts", cursor: null };
+      } else {
+        const id = await ctx.db.insert("workspaceMigrations", {
           workspaceId,
-          counts: { drafts: 0, scheduled: 0, published: 0, failed: 0 },
-          publishedFacets: [],
-        };
-        if (statsRows[0]) await ctx.db.replace(statsRows[0]._id, empty);
-        else await ctx.db.insert("postStats", empty);
-        for (const duplicate of statsRows.slice(1))
-          await ctx.db.delete(duplicate._id);
-        if (state) {
-          await ctx.db.patch(state._id, { phase: "posts", cursor: null });
-          state = { ...state, phase: "posts", cursor: null };
-        } else {
-          const id = await ctx.db.insert("workspaceMigrations", {
-            workspaceId,
-            phase: "posts",
-            cursor: null,
-          });
-          state = await ctx.db.get(id);
-        }
-      }
-      if (state?.phase === "posts") {
-        const page = await ctx.db
-          .query("posts")
-          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-          .paginate({ cursor: state.cursor, numItems: 100 });
-        const stats = await ctx.db
-          .query("postStats")
-          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-          .unique();
-        if (!stats) throw new Error("Migration stats missing");
-        const counts = stats.counts;
-        const publishedFacets = stats.publishedFacets;
-        for (const post of page.page) {
-          for (const part of post.parts) {
-            if (!part.imageId) continue;
-            const storageId = part.imageId;
-            const asset = await ctx.db
-              .query("assets")
-              .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
-              .unique();
-            if (asset && asset.workspaceId !== workspaceId)
-              throw new Error("Legacy asset ownership conflict");
-            if (!asset) {
-              await ctx.db.insert("assets", { workspaceId, storageId });
-              registered++;
-            }
-          }
-          if (
-            !post.libraryIndexed ||
-            post.rootPublishedId !== post.publishedIds[0]
-          ) {
-            await ctx.db.patch(post._id, {
-              libraryIndexed: true,
-              rootPublishedId: post.publishedIds[0],
-            });
-            indexed++;
-          }
-          counts[viewOf(post)]++;
-          if (post.status.kind !== "published") continue;
-          for (const dimension of dimensions) {
-            const code = post.meta?.[dimension];
-            if (code === undefined) continue;
-            const facet = publishedFacets.find(
-              (f) => f.dimension === dimension && f.code === code,
-            );
-            if (facet) facet.count++;
-            else publishedFacets.push({ dimension, code, count: 1 });
-          }
-        }
-        await ctx.db.patch(stats._id, { counts, publishedFacets });
-        await ctx.db.patch(state._id, {
-          cursor: page.continueCursor,
-          phase: page.isDone ? "done" : "posts",
+          phase: "posts",
+          cursor: null,
         });
-        done = page.isDone;
+        state = await ctx.db.get(id);
       }
+    }
+    if (done && state?.phase === "posts") {
+      const page = await ctx.db
+        .query("posts")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+        .paginate({ cursor: state.cursor, numItems: 100 });
+      const stats = await ctx.db
+        .query("postStats")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+        .unique();
+      if (!stats) throw new Error("Migration stats missing");
+      const counts = stats.counts;
+      const publishedFacets = stats.publishedFacets;
+      for (const post of page.page) {
+        for (const part of post.parts) {
+          if (!part.imageId) continue;
+          const storageId = part.imageId;
+          const asset = await ctx.db
+            .query("assets")
+            .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+            .unique();
+          if (asset && asset.workspaceId !== workspaceId)
+            throw new Error("Legacy asset ownership conflict");
+          if (!asset) {
+            await ctx.db.insert("assets", { workspaceId, storageId });
+            registered++;
+          }
+        }
+        if (
+          !post.libraryIndexed ||
+          post.rootPublishedId !== post.publishedIds[0]
+        ) {
+          await ctx.db.patch(post._id, {
+            libraryIndexed: true,
+            rootPublishedId: post.publishedIds[0],
+          });
+          indexed++;
+        }
+        counts[viewOf(post)]++;
+        if (post.status.kind !== "published") continue;
+        for (const dimension of dimensions) {
+          const code = post.meta?.[dimension];
+          if (code === undefined) continue;
+          const facet = publishedFacets.find(
+            (f) => f.dimension === dimension && f.code === code,
+          );
+          if (facet) facet.count++;
+          else publishedFacets.push({ dimension, code, count: 1 });
+        }
+      }
+      await ctx.db.patch(stats._id, { counts, publishedFacets });
+      await ctx.db.patch(state._id, {
+        cursor: page.continueCursor,
+        phase: page.isDone ? "done" : "posts",
+      });
+      done = page.isDone;
     }
     const hash =
       legacyTokenHash ??
