@@ -11,4 +11,6 @@
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
-<DemoApp />
+<div data-sveltekit-reload>
+	<DemoApp />
+</div>

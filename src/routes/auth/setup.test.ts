@@ -34,3 +34,18 @@ test("login names the missing WorkOS setup", async () => {
   if (!isHttpError(result)) throw new Error("Expected setup error");
   expect(result.body.message).toContain("WORKOS_COOKIE_PASSWORD");
 });
+
+test("demo responses block network connections and form submissions", async () => {
+  const setHeaders = vi.fn();
+  await handle({
+    event: {
+      url: new URL("https://antre.example/demo"),
+      request: new Request("https://antre.example/demo"),
+      setHeaders,
+    },
+    resolve: async () => new Response("demo"),
+  } as never);
+  expect(setHeaders).toHaveBeenCalledWith({
+    "content-security-policy": expect.stringContaining("connect-src 'none'; form-action 'none'"),
+  });
+});

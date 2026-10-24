@@ -26,7 +26,7 @@
 	/>
 </svelte:head>
 
-<div class="public-home">
+<div class="public-home" data-sveltekit-reload>
 	<header class="masthead">
 		<a class="wordmark" href="/" aria-label="Antre home"
 			>antre<span aria-hidden="true">.</span></a

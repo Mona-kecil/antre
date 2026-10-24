@@ -9,6 +9,12 @@ import {
 
 export const handle: Handle = async ({ event, resolve }) => {
   const path = event.url.pathname;
+  if (path === "/demo" || path.startsWith("/demo/")) {
+    event.setHeaders({
+      "content-security-policy":
+        "connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: blob:",
+    });
+  }
   const privatePath =
     path === "/app" ||
     path.startsWith("/app/") ||
