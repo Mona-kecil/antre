@@ -2,6 +2,18 @@
 
 This procedure has not run against production. Keep the existing owner's data private throughout the cutover. The schema accepts legacy rows during the migration, but runtime access and dispatch require a bound workspace. Do not treat an optional `workspaceId` as permission to use a default owner.
 
+## Local verification
+
+Source at `98c0c0a` passed 263 tests, the Svelte type check with zero diagnostics, and the production build. A separate checkout built with only `.env.example`; its landing, demo, and privacy pages returned 200 without credentials. Private routes reported the missing login configuration.
+
+The browser checks covered desktop and phone layouts, demo draft and queue operations, simulated publication, persistence, and reset. The demo made no backend or provider requests. A temporary WorkOS staging user completed hosted sign-in, returned through the callback to onboarding, saved a draft in a new workspace, and signed out. The test identity was removed and workspace cleanup was scheduled.
+
+`node scripts/check-workspaces.mjs --local` passed seven checks against WorkOS staging and loopback Convex: distinct JWT-backed workspaces, foreign-record rejection, personal MCP access and revocation, media isolation, one-use HTTP uploads, private session rendering, and deletion fencing. This did not test production or publish a remote post.
+
+An independent GPT-6-astra review found two defects: a replaced LinkedIn token could strand an unsent attempt, and a full batch of new legacy rows could skip rebuilding a completed migration. Both fixes passed re-review. Each regression test failed against the earlier source. Cross-family review could not run because the Claude requests hit rate limits.
+
+Hosted session refresh, completed asynchronous deletion, migration and backup-restore rehearsal, verified production owner binding, and non-owner provider approval and publication remain unverified. The steps below cover the production rollout. The decision trail is in `.audit/public-workspaces.tsv`.
+
 ## Prepare
 
 1. Finish local checks and a development rehearsal. Confirm the web server and Convex client use the same deployment.
