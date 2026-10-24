@@ -8,6 +8,9 @@
  * @module
  */
 
+import type * as access from "../access.js";
+import type * as ownership from "../ownership.js";
+import type * as migrations from "../migrations.js";
 import type * as account from "../account.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
@@ -30,6 +33,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  access: typeof access;
+  ownership: typeof ownership;
+  migrations: typeof migrations;
   account: typeof account;
   auth: typeof auth;
   crons: typeof crons;
