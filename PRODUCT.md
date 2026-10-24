@@ -8,7 +8,7 @@ web
 
 ## Users
 
-One account owner reviews drafts and schedules posts, including drafts created by an agent through MCP.
+People review drafts and schedule posts to their own Threads account and personal LinkedIn profile. Visitors can explore a synthetic demo without an account. Each signed-in user owns a private workspace and can grant an agent access through MCP.
 
 ## Product Purpose
 
@@ -16,17 +16,20 @@ Antre holds drafts for review and publishes approved posts at chosen times.
 
 ## Operating Context
 
-The app runs on SvelteKit and Convex, with a Vercel deployment at https://antre-hazel.vercel.app. Existing app access belongs to one Threads account.
+SvelteKit serves the public site, demo, and private app. Convex stores workspace data and runs publishing jobs. WorkOS AuthKit supplies app login. Threads and LinkedIn OAuth connect publishing profiles after login. The existing Vercel deployment is https://antre-hazel.vercel.app; this branch's public release still needs deployment and provider access checks.
 
 ## Capabilities and Constraints
 
 - Threads supports multipart posts, images, a publishing queue, replies, and a library.
-- LinkedIn targets the owner's personal profile. Its content is mostly distinct from Threads content and does not inherit the owner's marketing topics.
+- LinkedIn targets a personal profile. Its drafts and writing preferences stay separate from Threads.
 - The first LinkedIn release covers text drafts, review, and scheduling.
 - Each channel keeps its own drafts, topics, posting schedule, and connection state.
 - LinkedIn company Pages, engagement analytics, and a replies inbox are outside this release.
-- The owner has authorized setup of the LinkedIn integration. A custom domain is not required.
+- Public pages live at `/` and `/demo`. Private pages live under `/app`.
+- The demo stores synthetic data in the current browser and never publishes to a platform.
+- Workspaces own their posts, media, settings, connection tokens, and agent grants. Signing out leaves queued jobs running. Disconnecting a channel blocks new dispatches until that profile reconnects.
+- New workspaces choose an IANA timezone. The legacy workspace retains Asia/Jakarta and its queued UTC timestamps.
 
 ## Open Decisions
 
-The owner has not specified LinkedIn topics or a writing style. Do not seed marketing topics or infer a content strategy.
+Threads and LinkedIn public access must be checked with a non-owner account before launch. Do not claim approval from source configuration alone. New users choose their own topics and writing preferences.
