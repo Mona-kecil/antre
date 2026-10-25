@@ -158,8 +158,7 @@ export const getAccount = internalQuery({
   args: { workspaceId: v.id("workspaces") },
   handler: async (ctx, { workspaceId }) => {
     const workspace = await ctx.db.get(workspaceId);
-    if (!workspace || workspace.state !== "active" || !workspace.ownerId)
-      return null;
+    if (!workspace || workspace.state !== "active") return null;
     return ctx.db
       .query("account")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
@@ -214,7 +213,7 @@ export const complete = internalMutation({
       post.status.retryAt !== undefined
     )
       return;
-    const workspace = post.workspaceId && (await ctx.db.get(post.workspaceId));
+    const workspace = await ctx.db.get(post.workspaceId);
     if (!workspace) return;
     if (workspace.state === "deleting" && result.kind === "failed") {
       await ctx.db.patch(id, {
@@ -472,8 +471,7 @@ export const saveToken = internalMutation({
     { workspaceId, expectedToken, token, error, invalid },
   ) => {
     const workspace = await ctx.db.get(workspaceId);
-    if (!workspace || workspace.state !== "active" || !workspace.ownerId)
-      return;
+    if (!workspace || workspace.state !== "active") return;
     const account = await ctx.db
       .query("account")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
@@ -566,10 +564,8 @@ export const sweepStuck = internalMutation({
       .query("posts")
       .withIndex("by_kind_at", (q) => q.eq("status.kind", "publishing"))
       .collect()) {
-      const workspace =
-        post.workspaceId && (await ctx.db.get(post.workspaceId));
-      if (!workspace || workspace.state !== "active" || !workspace.ownerId)
-        continue;
+      const workspace = await ctx.db.get(post.workspaceId);
+      if (!workspace || workspace.state !== "active") continue;
       if (
         post.status.kind === "publishing" &&
         post.status.startedAt < Date.now() - 15 * 60_000
@@ -615,11 +611,7 @@ export const imageUrl = internalQuery({
   args: { id: v.id("posts"), imageId: v.id("_storage") },
   handler: async (ctx, { id, imageId }) => {
     const post = await ctx.db.get(id);
-    if (
-      !post ||
-      !post.workspaceId ||
-      !post.parts.some((part) => part.imageId === imageId)
-    )
+    if (!post || !post.parts.some((part) => part.imageId === imageId))
       throw new Error("Image not found");
     await activeWorkspace(ctx, post.workspaceId);
     const asset = await ctx.db

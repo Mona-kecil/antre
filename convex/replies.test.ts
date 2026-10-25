@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { insertPost } from "./lib/postStore";
 import { api, internal } from "./_generated/api";
 import {
   fixtureWorkspace,
@@ -28,7 +29,7 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
       tokenExpiresAt: now + 86_400_000,
       needsReconnect: false,
     });
-    await ctx.db.insert("posts", {
+    await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Old root" }],
       publishedIds: ["old"],
@@ -39,14 +40,14 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
         permalink: "https://threads.net/old",
       },
     });
-    await ctx.db.insert("posts", {
+    await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Draft" }],
       publishedIds: [],
       source: "agent",
       status: { kind: "draft" },
     });
-    return ctx.db.insert("posts", {
+    return insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Root text" }, { text: "Self-thread part" }],
       publishedIds: ["root", "self"],
@@ -428,7 +429,7 @@ test("reply sync keeps partial progress, collects redacted errors, and leaves th
       repliesSyncedAt: now - 3_600_000,
     });
     for (const id of ["bad", "good"])
-      await ctx.db.insert("posts", {
+      await insertPost(ctx, {
         workspaceId: await fixtureWorkspace(ctx),
         parts: [{ text: id }],
         publishedIds: [id],
@@ -486,7 +487,7 @@ async function replyWithDraft() {
       tokenExpiresAt: now + 86_400_000,
       needsReconnect: false,
     });
-    const postId = await ctx.db.insert("posts", {
+    const postId = await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Root" }],
       publishedIds: ["root"],

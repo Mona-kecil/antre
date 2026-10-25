@@ -15,7 +15,6 @@ import {
   patchPost,
   postsByKind,
   deletePost as removePost,
-  unindexedPosts,
 } from "./lib/postStore";
 import { readSettings } from "./lib/scheduling";
 import { threads } from "./publishing";
@@ -79,8 +78,6 @@ export const importPage = workspaceMutation({
   },
   handler: async (ctx: MutationCtx, { posts }) => {
     const existing = await postsByKind(ctx, "publishing").collect();
-    const legacy = await unindexedPosts(ctx).collect();
-    const known = new Set(legacy.map((post) => post.publishedIds[0]));
     // Defer recent posts until publishing has recorded their Threads ids.
     const importBefore = existing.reduce(
       (before, post) =>
@@ -91,7 +88,7 @@ export const importPage = workspaceMutation({
     );
     let imported = 0;
     for (const post of posts) {
-      if (known.has(post.id) || post.at >= importBefore) continue;
+      if (post.at >= importBefore) continue;
       if (
         await ctx.db
           .query("posts")
@@ -108,7 +105,6 @@ export const importPage = workspaceMutation({
         source: "threads",
         status: { kind: "published", at: post.at, permalink: post.permalink },
       });
-      known.add(post.id);
       imported++;
     }
     return imported;

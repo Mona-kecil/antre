@@ -55,7 +55,7 @@ Threads supports multipart posts, images, replies, metrics, and imported history
 
 LinkedIn supports one text post of 1–3,000 Unicode code points. A timeout, server error, or missing success ID can leave the result unknown. These posts are held until the user checks their profile and confirms duplicate risk for the current attempt. Reconnecting does not resend an unknown result. LinkedIn images, Pages, replies, engagement metrics, and history import are outside this release.
 
-Queues live on post status records. A queued post stores its time, job ID, and generation. Background jobs derive the workspace from persisted records. Missing ownership blocks dispatch. The two channel engines remain separate.
+Queues live on post status records. A queued post stores its time, job ID, and generation. Background jobs derive the workspace from persisted records. The schema requires workspace ownership and a workspace owner. The two channel engines remain separate.
 
 Automatic slots use the channel's IANA timezone. Each posting window starts its own interval grid, with inclusive endpoints. A nonexistent local slot is skipped; a repeated local slot uses its earlier occurrence. Explicit future timestamps can fall outside automatic windows. Changing timezone leaves existing queued UTC instants fixed. The legacy workspace keeps Asia/Jakarta.
 
@@ -79,7 +79,7 @@ npm test
 npm run build
 ```
 
-Tests exercise workspace isolation, owned media, personal agent grants, timezone transitions, migration, and publishing recovery with simulated provider responses. Live provider approval and posting need separate account tests.
+Tests exercise workspace isolation, owned media, personal agent grants, timezone transitions, and publishing recovery with simulated provider responses. Live provider approval and posting need separate account tests.
 
 Pushing to `main` deploys the Convex functions and then the app. The production build in `vercel.json` runs `npx convex deploy` with the `CONVEX_DEPLOY_KEY` set in Vercel's production environment. Preview builds skip Convex. Run production functions with `npx convex run --prod`.
 
@@ -91,4 +91,12 @@ node scripts/check-workspaces.mjs --local
 
 It requires a loopback Convex URL and staging WorkOS key. It checks real JWTs, private SSR pages, foreign IDs, media ingestion, one-use upload tickets, MCP access and revocation, and workspace deletion fencing. It removes the temporary WorkOS users and schedules local workspace cleanup when it finishes. It never connects posting profiles or publishes remote posts.
 
-`npm run build` creates a Vercel build; it does not deploy it. `npx convex dev --once` changes the selected development backend. `npx convex deploy` changes production. Do not deploy this schema over existing data without the [owner migration procedure](docs/plans/public-workspaces-rollout.md).
+For production, pass a dotenv file and a JSON array of owner post IDs kept outside the repository:
+
+```sh
+node scripts/check-workspaces.mjs --prod --env /path/to/production.env --foreign-ids /path/to/owner-post-ids.json
+```
+
+Production mode requires a live WorkOS API key, client ID, a session sealing password of at least 32 characters, and `CONVEX_URL=https://hip-wolverine-557.convex.cloud`. It targets `https://antre-hazel.vercel.app`, creates passwordless temporary users, and authenticates them with Magic Auth. An explicit dotenv file overrides matching process variables; missing values fall back to the process environment. The optional ID file checks owner posts through read queries from both temporary workspaces. The script deletes only those temporary workspaces and WorkOS users. This mode has not been run against production for this change.
+
+`npm run build` creates a Vercel build; it does not deploy it. `npx convex dev --once` changes the selected development backend. `npx convex deploy` changes production. The operator reports the production owner migration is complete; this source then requires ownership. Convex validates stored documents on deployment and rejects rows that lack required fields. See the [rollout history and schema gate](docs/plans/public-workspaces-rollout.md).

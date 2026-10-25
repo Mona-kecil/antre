@@ -49,7 +49,7 @@ export const queueSettings = {
   gapPolicy,
 };
 
-export const owned = { workspaceId: v.optional(v.id("workspaces")) };
+export const owned = { workspaceId: v.id("workspaces") };
 
 export default defineSchema({
   providerReceipts: defineTable({
@@ -66,13 +66,11 @@ export default defineSchema({
     tokenIdentifier: v.optional(v.string()),
   }).index("by_subject", ["subject"]),
   workspaces: defineTable({
-    ownerId: v.optional(v.id("users")),
+    ownerId: v.id("users"),
     state: v.union(v.literal("active"), v.literal("deleting")),
     timeZone: v.string(),
     legacy: v.optional(v.literal(true)),
-  })
-    .index("by_owner", ["ownerId"])
-    .index("by_legacy", ["legacy"]),
+  }).index("by_owner", ["ownerId"]),
   agentGrants: defineTable({
     workspaceId: v.id("workspaces"),
     hash: v.string(),
@@ -257,8 +255,6 @@ export default defineSchema({
     .index("workspace_by_kind_at", ["workspaceId", "status.kind", "status.at"])
     .index("by_at", ["status.at"])
     .index("workspace_by_at", ["workspaceId", "status.at"])
-    .index("by_libraryIndexed", ["libraryIndexed"])
-    .index("workspace_by_libraryIndexed", ["workspaceId", "libraryIndexed"])
     .index("by_rootPublishedId", ["rootPublishedId"])
     .index("workspace_by_rootPublishedId", ["workspaceId", "rootPublishedId"]),
   postStats: defineTable({
@@ -273,20 +269,9 @@ export default defineSchema({
       v.object({ dimension, code: v.string(), count: v.number() }),
     ),
   }).index("by_workspace", ["workspaceId"]),
-  // Deployment bridge: migrateSettings replaces legacy rows; remove the legacy
-  // branch in the next deployment after running that migration in production.
-  settings: defineTable(
-    v.union(
-      v.object({ ...owned, ...queueSettings }),
-      v.object({
-        ...owned,
-        timeZone: v.string(),
-        windowStart: v.string(),
-        windowEnd: v.string(),
-        intervalMinutes: v.number(),
-      }),
-    ),
-  ).index("by_workspace", ["workspaceId"]),
+  settings: defineTable({ ...owned, ...queueSettings }).index("by_workspace", [
+    "workspaceId",
+  ]),
   account: defineTable({
     ...owned,
     threadsUserId: v.string(),

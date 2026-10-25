@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { insertPost } from "./lib/postStore";
 import { api, internal } from "./_generated/api";
 import {
   fixtureWorkspace,
@@ -28,7 +29,7 @@ test("sync pages imports, removes missing older posts only after complete paging
       tokenExpiresAt: now + 86400000,
       needsReconnect: false,
     });
-    return await ctx.db.insert("posts", {
+    return await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "antre root" }, { text: "part 2" }],
       publishedIds: ["antre-root", "antre-reply"],
@@ -42,7 +43,7 @@ test("sync pages imports, removes missing older posts only after complete paging
     });
   });
   const { missing, recent } = await t.run(async (ctx) => {
-    const missing = await ctx.db.insert("posts", {
+    const missing = await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "deleted on Threads" }],
       publishedIds: ["deleted-root", "deleted-reply"],
@@ -53,7 +54,7 @@ test("sync pages imports, removes missing older posts only after complete paging
         permalink: "https://threads.net/deleted-root",
       },
     });
-    const recent = await ctx.db.insert("posts", {
+    const recent = await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "recent publication" }],
       publishedIds: ["recent-root"],
@@ -216,7 +217,7 @@ test("sync pages imports, removes missing older posts only after complete paging
     await t.run(async (ctx) => ctx.db.query("followers").collect()),
   ).toEqual([expect.objectContaining({ at: now, count: 1234 })]);
   const absentDuringFailure = await t.run(async (ctx) =>
-    ctx.db.insert("posts", {
+    insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "absent during failed paging" }],
       publishedIds: ["absent-during-failure"],
@@ -265,7 +266,7 @@ test("sync pages imports, removes missing older posts only after complete paging
   publishing = true;
   const startedAt = now - 30_000;
   const inFlight = await t.run(async (ctx) =>
-    ctx.db.insert("posts", {
+    insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "publishing-root" }],
       publishedIds: [],
@@ -347,7 +348,7 @@ test("taxonomy and partial tagging span statuses; grouping computes mean engagem
       ["zero views", 0, 0, undefined],
     ] as const) {
       ids.push(
-        await ctx.db.insert("posts", {
+        await insertPost(ctx, {
           workspaceId: await fixtureWorkspace(ctx),
           parts: [{ text }],
           publishedIds: [text],
@@ -497,9 +498,10 @@ test("own thread continuations do not inflate audience replies, engagement ranki
       tokenExpiresAt: now + 86_400_000,
       needsReconnect: false,
     });
-    return await Promise.all(
-      cases.map(async (fixture) =>
-        ctx.db.insert("posts", {
+    const ids = [];
+    for (const fixture of cases) {
+      ids.push(
+        await insertPost(ctx, {
           workspaceId: await fixtureWorkspace(ctx),
           parts: Array.from({ length: fixture.parts }, (_, i) => ({
             text: `${fixture.root} part ${i + 1}`,
@@ -528,8 +530,9 @@ test("own thread continuations do not inflate audience replies, engagement ranki
               }
             : {}),
         }),
-      ),
-    );
+      );
+    }
+    return ids;
   });
   vi.stubGlobal(
     "fetch",

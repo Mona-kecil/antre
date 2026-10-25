@@ -22,17 +22,16 @@ export async function tokenHash(token: string) {
 }
 export async function activeWorkspace(
   ctx: QueryCtx,
-  workspaceId: Id<"workspaces"> | undefined,
+  workspaceId: Id<"workspaces">,
 ) {
-  if (!workspaceId) throw new Error("Unbound workspace");
   const workspace = await ctx.db.get(workspaceId);
-  if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+  if (!workspace || workspace.state !== "active")
     throw new Error("Workspace unavailable");
   return workspace;
 }
 export async function workspaceContext<C extends QueryCtx>(
   ctx: C,
-  workspaceId: Id<"workspaces"> | undefined,
+  workspaceId: Id<"workspaces">,
 ): Promise<C & Access> {
   const workspace = await activeWorkspace(ctx, workspaceId);
   return { ...ctx, workspaceId: workspace._id, via: "user" };
@@ -102,12 +101,11 @@ export async function ownedAsset(
 
 export async function connectionActive(
   ctx: QueryCtx,
-  workspaceId: Id<"workspaces"> | undefined,
+  workspaceId: Id<"workspaces">,
   expectedToken?: string,
 ) {
-  if (!workspaceId) return null;
   const workspace = await ctx.db.get(workspaceId);
-  if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+  if (!workspace || workspace.state !== "active")
     return null;
   const account = await ctx.db
     .query("account")

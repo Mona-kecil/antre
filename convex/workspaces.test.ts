@@ -169,6 +169,9 @@ test("LinkedIn-only workspaces publish with their own credential and reject fore
   ])
     await expect(attempt()).rejects.toThrow("Not found");
   expect(await b.query(api.linkedin.get, { id: pa })).toBeNull();
+  const threadsPost = await a.mutation(api.posts.createDraft, draft);
+  for (const id of [threadsPost, "not-an-id"])
+    expect(await a.query(api.linkedin.get, { id })).toBeNull();
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -436,11 +439,7 @@ test("schema derives the owned table inventory and each table has a leading work
       name,
     ).toBe(true);
     const validator = table.validator;
-    if (validator.kind === "object")
-      expect("workspaceId" in validator.fields, name).toBe(true);
-    else if (validator.kind === "union")
-      for (const member of validator.members)
-        expect("workspaceId" in member.fields, name).toBe(true);
+    expect("workspaceId" in validator.fields, name).toBe(true);
   }
   expect([...cleanupTables].sort()).toEqual(owned.sort());
 });
@@ -797,59 +796,26 @@ test("provider deletion returns an opaque status, fences A, completes cleanup an
   ).toEqual(result);
 });
 
-test("unbound legacy jobs hold without selecting another workspace's connection", async () => {
-  vi.useFakeTimers();
-  const { a, root } = await setup();
-  await connectThreads(a, {
-    threadsUserId: "ta",
-    username: "A",
-    accessToken: "a-token",
-    tokenExpiresAt: Date.now() + 100000,
+test("schema rejects unbound posts and workspaces without an owner", async () => {
+  const { a, root, wa } = await setup();
+  const post = await a.mutation(api.posts.createDraft, draft);
+  const linkedin = await a.mutation(api.linkedin.createDraft, {
+    text: "owned",
+    source: "web",
   });
-  const now = Date.now();
-  const ids = await root.run(async (ctx) => {
-    const threads = await ctx.db.insert("posts", {
-      source: "agent",
-      parts: [{ text: "unbound" }],
-      publishedIds: [],
-      status: { kind: "draft" },
-    });
-    const jobId = await ctx.scheduler.runAt(now + 100000, internal.posts.fire, {
-      id: threads,
-      retry: false,
-    });
-    await ctx.db.patch(threads, {
-      status: { kind: "queued", at: now - 1, jobId },
-    });
-    const linkedin = await ctx.db.insert("linkedinPosts", {
-      source: "web",
-      text: "unbound",
-      status: { kind: "draft" },
-    });
-    const liJobId = await ctx.scheduler.runAt(
-      now + 100000,
-      internal.linkedin.fire,
-      { id: linkedin, generation: 1 },
-    );
-    await ctx.db.patch(linkedin, {
-      status: { kind: "queued", at: now - 1, jobId: liJobId, generation: 1 },
-    });
-    return { threads, linkedin };
-  });
-  const fetcher = vi.fn(async () => {
-    throw new Error("No provider dispatch expected");
-  });
-  vi.stubGlobal("fetch", fetcher);
-  await root.mutation(internal.posts.fire, { id: ids.threads, retry: false });
-  await root.mutation(internal.linkedin.fire, {
-    id: ids.linkedin,
-    generation: 1,
-  });
-  expect(await root.run((ctx) => ctx.db.get(ids.threads))).toMatchObject({
-    status: { kind: "held", reason: "Unbound workspace" },
-  });
-  expect(await root.run((ctx) => ctx.db.get(ids.linkedin))).toMatchObject({
-    status: { kind: "held", error: "Unbound workspace" },
-  });
-  expect(fetcher).not.toHaveBeenCalled();
+  for (const id of [post, linkedin])
+    await expect(
+      root.run((ctx) => ctx.db.patch(id, { workspaceId: undefined })),
+    ).rejects.toThrow();
+  await expect(
+    root.run((ctx) => ctx.db.patch(wa, { ownerId: undefined })),
+  ).rejects.toThrow();
+  for (const table of cleanupTables) {
+    expect(
+      schema.tables[table].validator.fields.workspaceId.isOptional,
+      table,
+    ).toBe("required");
+  }
+  const workspace = await root.run((ctx) => ctx.db.get(wa));
+  expect(workspace?.ownerId).toBeDefined();
 });

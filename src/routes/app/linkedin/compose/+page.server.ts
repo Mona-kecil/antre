@@ -11,12 +11,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const { client, secret } = await owner(locals.userId);
   const editId = url.searchParams.get("edit");
   const [edit, settings, connection] = await Promise.all([
-    editId
-      ? client.query(api.linkedin.get, {
-          secret,
-          id: editId as Id<"linkedinPosts">,
-        })
-      : null,
+    editId ? client.query(api.linkedin.get, { secret, id: editId }) : null,
     client.query(api.linkedin.getSettings, { secret }),
     client.query(api.linkedin.current, { secret }),
   ]);

@@ -1,3 +1,4 @@
+import { insertPost } from "../../../convex/lib/postStore";
 import { workspaceTest, storeOwnedImage } from "#lib/server/testing.ts";
 import type { Doc } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
@@ -399,7 +400,7 @@ test("MCP tags and searches published posts through Convex", async () => {
   bridge.mutation.mockImplementation(t.mutation);
   try {
     const id = await t.run((ctx) =>
-      ctx.db.insert("posts", {
+      insertPost(ctx, {
         workspaceId,
         parts: [{ text: "Creative library post" }],
         publishedIds: ["live"],
@@ -660,16 +661,18 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
         tokenExpiresAt: Date.now() + 86_400_000,
         needsReconnect: true,
       });
-      // Either an unbounded draft or history read exceeds the query's budget.
-      for (let i = 0; i < 60; i++) {
-        await ctx.db.insert("posts", {
+    });
+    // Either an unbounded draft or history read exceeds the query's budget.
+    for (let i = 0; i < 60; i++) {
+      await t.run(async (ctx) => {
+        await insertPost(ctx, {
           workspaceId,
           source: "web",
           parts: [{ text: "Unrelated draft" }],
           publishedIds: [],
           status: { kind: "draft" },
         });
-        await ctx.db.insert("posts", {
+        await insertPost(ctx, {
           workspaceId,
           source: "threads",
           parts: [{ text: "Old history" }],
@@ -680,7 +683,9 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
             permalink: "https://threads.net/old",
           },
         });
-      }
+      });
+    }
+    await t.run(async (ctx) => {
       for (const status of [
         { kind: "failed", at: at("13:00"), error: "Failed" },
         {
@@ -701,7 +706,7 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
           permalink: "https://threads.net/tomorrow",
         },
       ] satisfies Doc<"posts">["status"][]) {
-        await ctx.db.insert("posts", {
+        await insertPost(ctx, {
           workspaceId,
           source: "web",
           parts: [{ text: status.kind }],
@@ -811,7 +816,7 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
     });
     await t.mutation(api.posts.deletePost, { secret, id: missing });
     const published = await t.run((ctx) =>
-      ctx.db.insert("posts", {
+      insertPost(ctx, {
         workspaceId,
         source: "threads",
         parts: [{ text: "Published", imageId }],

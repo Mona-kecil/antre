@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import { patchPost } from "./lib/postStore";
+import { insertPost, patchPost } from "./lib/postStore";
 import { storeTestImage } from "./testing/storage";
 import { fixtureWorkspace, ownerTest } from "./testing/workspace.test-support";
 
@@ -68,7 +68,7 @@ test("post pages filter text and taxonomy, count facets before their own filter,
       [100, 200, 100],
     ])
       ids.push(
-        await ctx.db.insert("posts", {
+        await insertPost(ctx, {
           workspaceId: await fixtureWorkspace(ctx),
           parts: [{ text: `published ${at}` }],
           publishedIds: [String(at)],
@@ -89,7 +89,7 @@ test("post pages filter text and taxonomy, count facets before their own filter,
           },
         }),
       );
-    await ctx.db.insert("posts", {
+    await insertPost(ctx, {
       workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "failed" }],
       publishedIds: [],
@@ -226,7 +226,7 @@ test("post pages default to 25 rows, allow 100, and break tied dates consistentl
   const t = await ownerTest();
   await t.run(async (ctx) => {
     for (let i = 0; i < 102; i++)
-      await ctx.db.insert("posts", {
+      await insertPost(ctx, {
         workspaceId: await fixtureWorkspace(ctx),
         parts: [{ text: String(i) }],
         publishedIds: [],

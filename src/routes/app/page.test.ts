@@ -1,3 +1,4 @@
+import { insertPost } from "../../../convex/lib/postStore";
 import { getFunctionName } from "convex/server";
 import { workspaceTest, workosOwner } from "#lib/server/testing.ts";
 import { expect, test, vi } from "vitest";
@@ -142,7 +143,7 @@ test("library load checks the owner and returns only published posts newest firs
         ["old", 1000],
         ["new", 2000],
       ] as const)
-        await ctx.db.insert("posts", {
+        await insertPost(ctx, {
           workspaceId,
           source: "threads",
           parts: [{ text }],
