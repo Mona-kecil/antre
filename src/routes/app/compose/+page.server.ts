@@ -5,6 +5,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { owner, reason } from "#lib/server/owner.ts";
 import { dayStart, isoDay, parseLocal, when } from "#lib/time.ts";
 import { topicTagSchema } from "#lib/topicTag.ts";
+import { futureTime } from "#lib/time.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
 const partsSchema = z
@@ -60,6 +61,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : null,
     settings,
     nextSlot: schedule.nextSlot,
+    preset: futureTime(url.searchParams.get("at")),
   };
 };
 

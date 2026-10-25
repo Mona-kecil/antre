@@ -3,7 +3,7 @@ import { z } from "zod";
 import { api } from "../../../../../convex/_generated/api";
 import type { Id } from "../../../../../convex/_generated/dataModel";
 import { owner, reason } from "#lib/server/owner.ts";
-import { parseLocal } from "#lib/time.ts";
+import { futureTime, parseLocal } from "#lib/time.ts";
 import { linkedinTextSchema } from "#lib/linkedin.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
@@ -22,7 +22,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   ]);
   if (editId && (!edit || !["draft", "failed"].includes(edit.status.kind)))
     error(404, "This LinkedIn draft is gone or already scheduled.");
-  return { edit, settings, connection };
+  return {
+    edit,
+    settings,
+    connection,
+    preset: futureTime(url.searchParams.get("at")),
+  };
 };
 
 export const actions: Actions = {

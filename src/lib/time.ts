@@ -79,3 +79,8 @@ export function slots(
   const timeZone = settings.timeZone ?? DEFAULT_TIME_ZONE;
   return slotsForDay({ ...settings, timeZone }, isoDay(day, timeZone));
 }
+// A `?at=` epoch from a link, kept only while it is still in the future.
+export function futureTime(value: string | null, now = Date.now()) {
+  const at = Number(value);
+  return value && Number.isSafeInteger(at) && at > now ? at : null;
+}

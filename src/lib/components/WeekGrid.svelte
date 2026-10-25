@@ -52,6 +52,14 @@
 		mark.kind === 'published' ? 'pub' : mark.kind === 'failed' ? 'fail' : mark.kind === 'held' ? 'held' : 'queued';
 	const short = (at: number) => `${dayLabel(at).split(' ')[0]} ${clock(at)}`;
 	const axis = $derived(windows(week.from));
+
+	let tip = $state<{ text: string; x: number; y: number } | null>(null);
+	function hover(event: PointerEvent) {
+		const cell = (event.target as Element).closest<HTMLElement>('[data-tip]');
+		if (!cell) return (tip = null);
+		const box = cell.getBoundingClientRect();
+		tip = { text: cell.dataset.tip ?? '', x: box.left + box.width / 2, y: box.top };
+	}
 </script>
 
 <section class="week" aria-label="Week">
@@ -60,7 +68,8 @@
 		<a class="icon-btn" href={withDay(calendarDay(week.day, -7, tz))} aria-label="Previous week"><Icon name="left" size={16} /></a>
 		<a class="icon-btn" href={withDay(calendarDay(week.day, 7, tz))} aria-label="Next week"><Icon name="right" size={16} /></a>
 	</header>
-	<div class="grid">
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="grid" onpointerover={hover} onpointerleave={() => (tip = null)}>
 		<div class="col axis" aria-hidden="true">
 			<span class="head"></span>
 			{#each axis as group}
@@ -114,6 +123,9 @@
 			</div>
 		{/each}
 	</div>
+	{#if tip}
+		<div class="tip" role="tooltip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>
+	{/if}
 	<p class="sum muted num">
 		<b>{week.marks.length}</b>
 		{week.marks.length === 1 ? 'post' : 'posts'}
@@ -267,6 +279,25 @@
 		height: 1.5px;
 		border-radius: 1px;
 		background: var(--red);
+	}
+
+	.tip {
+		position: fixed;
+		z-index: 40;
+		max-width: 240px;
+		padding: 5px 9px;
+		overflow: hidden;
+		border-radius: 8px;
+		background: #0f0f0d;
+		color: #f4f3ee;
+		font-size: 12px;
+		font-weight: 500;
+		line-height: 1.35;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+		pointer-events: none;
+		transform: translate(-50%, calc(-100% - 6px));
+		box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
 	}
 
 	.sum {

@@ -3,7 +3,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { untrack } from 'svelte';
 	import { MAX_LINKEDIN_TEXT, linkedinTextSchema } from '#lib/linkedin.ts';
-	import { localInput } from '#lib/displayTime.svelte.ts';
+	import { localInput, when } from '#lib/displayTime.svelte.ts';
 	import Icon from '#lib/components/Icon.svelte';
 	import type { PageProps } from './$types';
 	let { data, form }: PageProps = $props();
@@ -73,7 +73,7 @@
 		>
 		<div>
 			<strong>{data.connection?.name ?? 'Your personal profile'}</strong>
-			<p class="muted">Publishing on LinkedIn</p>
+			<span class="audience">Anyone</span>
 		</div>
 	</div>
 	{#if !connected}<p class="connection">
@@ -86,14 +86,14 @@
 		id="linkedin-text"
 		name="text"
 		bind:value={text}
-		placeholder="Write for your LinkedIn audience…"
+		placeholder="What do you want to talk about?"
 		aria-describedby="text-count"
 		required></textarea>
 	<p class="counter" class:over={count > MAX_LINKEDIN_TEXT} id="text-count">
-		{count.toLocaleString()} / {MAX_LINKEDIN_TEXT.toLocaleString()}
+		{count >= MAX_LINKEDIN_TEXT * 0.7 ? `${count.toLocaleString()} / ${MAX_LINKEDIN_TEXT.toLocaleString()}` : ''}
 	</p>
 	<div class="fields">
-		<label for="topic">Topic <span class="muted">· internal label</span></label
+		<label for="topic">Topic</label
 		><input
 			class="field"
 			id="topic"
@@ -105,32 +105,28 @@
 		/><datalist id="linkedin-topics"
 			>{#each data.settings.topics as value}<option {value}
 				></option>{/each}</datalist
-		><label for="notes"
-			>Notes <span class="muted">· for you and your agent</span></label
-		><textarea
+		><label for="notes">Notes</label><textarea
 			class="field notes"
 			id="notes"
 			name="notes"
 			bind:value={notes}
 			maxlength="5000"
-			placeholder="Optional context"></textarea>
+			></textarea>
 	</div>
 	{#if form?.error}<p class="error" role="alert">{form.error}</p>{/if}
 	<div class="actions">
-		<button
-			class="btn {review ? 'btn-secondary' : 'btn-primary'}"
-			name="mode"
-			value="draft"
-			disabled={invalid}>Save LinkedIn draft</button
-		><button
-			class="btn btn-secondary"
-			name="mode"
-			value="queue"
-			disabled={invalid}>Add to LinkedIn queue</button
-		>
+		<button class="btn btn-secondary" name="mode" value="draft" disabled={invalid}>Save draft</button>
+		<span class="spacer"></span>
+		{#if data.preset}
+			<button class="btn btn-primary" name="mode" value="schedule" disabled={invalid}>
+				Schedule · {when(data.preset)}
+			</button>
+		{:else}
+			<button class="btn btn-primary" name="mode" value="queue" disabled={invalid}>Queue</button>
+		{/if}
 	</div>
 	<details class="timing">
-		<summary>Choose a publish time</summary><label for="publish-time"
+		<summary>Choose a time</summary><label for="publish-time"
 			>Time in {data.settings.timeZone}</label
 		><input
 			class="field"
@@ -138,6 +134,7 @@
 			type="datetime-local"
 			name="at"
 			{min}
+			value={data.preset ? localInput(data.preset) : undefined}
 		/><button
 			class="btn btn-secondary"
 			name="mode"
@@ -189,14 +186,27 @@
 		align-items: center;
 		padding: 20px 16px 12px;
 	}
-	.identity p {
-		font-size: 12px;
+	.identity div {
+		display: grid;
+		justify-items: start;
+		gap: 2px;
+	}
+	.identity strong {
+		font-size: 16px;
+	}
+	.audience {
+		padding: 1px 10px;
+		border: 1px solid var(--line-2);
+		border-radius: 999px;
+		color: var(--fg-2);
+		font-size: 12.5px;
 	}
 	.avatar {
 		display: grid;
 		place-items: center;
-		width: 36px;
-		height: 36px;
+		width: 48px;
+		height: 48px;
+		font-size: 18px;
 		border-radius: 50%;
 		background: var(--primary);
 		color: var(--on-primary);
@@ -221,7 +231,8 @@
 		resize: vertical;
 		color: var(--fg);
 		font: inherit;
-		line-height: 1.6;
+		font-size: 17px;
+		line-height: 1.5;
 	}
 	.post-text::placeholder {
 		color: var(--fg-2);
@@ -253,9 +264,17 @@
 		resize: vertical;
 	}
 	.actions {
-		display: grid;
+		position: sticky;
+		bottom: 0;
+		display: flex;
+		align-items: center;
 		gap: 8px;
-		padding: 16px;
+		padding: 12px 16px;
+		border-top: 1px solid var(--line);
+		background: var(--bg);
+	}
+	.spacer {
+		flex: 1;
 	}
 	.error {
 		padding: 8px 16px;
