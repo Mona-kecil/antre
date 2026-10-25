@@ -2,24 +2,21 @@ import { v } from "convex/values";
 import { z } from "zod";
 import { addLocalDays, localInstant } from "../src/lib/timezone";
 import type { Doc } from "./_generated/dataModel";
-import { internalMutation } from "./_generated/server";
 import type {
   OwnedMutationCtx as MutationCtx,
   OwnedQueryCtx as QueryCtx,
 } from "./access";
-import { ownedRow, workspaceContext } from "./access";
+import { ownedRow } from "./access";
 import { ownerMutation, ownerQuery } from "./auth";
 import { partsWithImages } from "./lib/media";
 import {
   audienceMetrics,
   creationOrder,
   dimensions,
-  indexPostBatch,
   kinds,
   libraryStats,
   patchPost,
   postsByKind,
-  unindexedPosts,
   viewForKind,
   viewOf,
 } from "./lib/postStore";
@@ -478,19 +475,3 @@ export const insights = ownerQuery(
     };
   },
 );
-
-// Run after deployment until done=true. Each call commits at most 100 legacy rows.
-// Live writers claim their row in the same transaction, so retries cannot double count.
-export const backfillPostStats = internalMutation({
-  args: { workspaceId: v.id("workspaces") },
-  handler: async (base, { workspaceId }) => {
-    const ctx = await workspaceContext(base, workspaceId);
-    const result = await unindexedPosts(ctx).paginate({
-      numItems: 100,
-      cursor: null,
-      maximumBytesRead: 1_000_000,
-    });
-    await indexPostBatch(ctx, workspaceId, result.page);
-    return { indexed: result.page.length, done: result.isDone };
-  },
-});

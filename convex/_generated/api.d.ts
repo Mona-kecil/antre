@@ -20,7 +20,6 @@ import type * as lib_scheduling from "../lib/scheduling.js";
 import type * as library from "../library.js";
 import type * as linkedin from "../linkedin.js";
 import type * as maintenance from "../maintenance.js";
-import type * as migrations from "../migrations.js";
 import type * as ownership from "../ownership.js";
 import type * as posts from "../posts.js";
 import type * as publishing from "../publishing.js";
@@ -49,7 +48,6 @@ declare const fullApi: ApiFromModules<{
   library: typeof library;
   linkedin: typeof linkedin;
   maintenance: typeof maintenance;
-  migrations: typeof migrations;
   ownership: typeof ownership;
   posts: typeof posts;
   publishing: typeof publishing;

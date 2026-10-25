@@ -3,9 +3,7 @@ import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   connectThreads,
-  fixtureWorkspace,
   ownerTest,
-  workspaceIdOf,
 } from "./testing/workspace.test-support";
 
 const wib = (time: string) => Date.parse(`${time}+07:00`);
@@ -339,134 +337,6 @@ test("settings sort and validate windows; slots span windows and WIB days withou
       }),
     ).rejects.toThrow("integer between 5 and 240");
   }
-});
-
-test("legacy settings migrate once, protect queued times, and recover the incident's auth failures", async () => {
-  const { t, draft, get, account, block } = await setup();
-  const id = await draft("legacy queued");
-  const at = await t.mutation(api.posts.queue, { id });
-  const failed = await draft("incident");
-  await block();
-  await t.run(async (ctx) => {
-    const row = await ctx.db.query("settings").unique();
-    if (!row) throw new Error("Missing settings");
-    await ctx.db.replace(row._id, {
-      workspaceId: await fixtureWorkspace(ctx),
-      windowStart: "08:00",
-      windowEnd: "10:00",
-      intervalMinutes: 60,
-      timeZone: "Asia/Jakarta",
-    });
-    await ctx.db.patch(id, { pinned: undefined });
-    await ctx.db.patch(failed, {
-      status: {
-        kind: "failed",
-        at,
-        error: "Threads account needs reconnecting",
-      },
-    });
-  });
-  expect(await t.query(api.posts.getSettings, {})).toEqual({
-    ...settings,
-    windows: [{ start: "08:00", end: "10:00" }],
-    intervalMinutes: 60,
-  });
-  expect(
-    await t.mutation(internal.posts.migrateSettings, {
-      workspaceId: await workspaceIdOf(t),
-    }),
-  ).toMatchObject({
-    legacyPostsPinned: 1,
-    authFailuresRecovered: 1,
-  });
-  expect(await get(id)).toMatchObject({
-    pinned: true,
-    status: { kind: "queued", at },
-  });
-  expect(await get(failed)).toMatchObject({ status: { kind: "held", at } });
-  const migrated = await t.run(async (ctx) =>
-    ctx.db.query("settings").unique(),
-  );
-  expect(migrated).not.toHaveProperty("windowStart");
-  expect(
-    await t.mutation(internal.posts.migrateSettings, {
-      workspaceId: await workspaceIdOf(t),
-    }),
-  ).toMatchObject({
-    legacyPostsPinned: 0,
-    authFailuresRecovered: 0,
-  });
-  await connectThreads(t, {
-    ...account,
-    accessToken: "new-token",
-  });
-  expect(await get(failed)).toMatchObject({
-    status: { kind: "queued", at: at + day, retry: false },
-  });
-});
-
-test("migration classifies legacy times on the legacy grid and preserves set pins", async () => {
-  const { t, draft, get } = await setup();
-  const cases = [
-    { time: "07:45:00", pinned: false },
-    { time: "07:10:00", pinned: true },
-    { time: "15:00:00", pinned: true },
-  ];
-  const ids: Id<"posts">[] = [];
-  for (const { time } of cases) {
-    const id = await draft(time);
-    ids.push(id);
-    await t.mutation(api.posts.queue, {
-      id,
-      at: wib(`2026-10-19T${time}`),
-    });
-  }
-  await t.run(async (ctx) => {
-    const row = await ctx.db.query("settings").unique();
-    if (!row) throw new Error("Missing settings");
-    await ctx.db.replace(row._id, {
-      workspaceId: await fixtureWorkspace(ctx),
-      windowStart: "07:00",
-      windowEnd: "09:00",
-      intervalMinutes: 45,
-      timeZone: "Asia/Jakarta",
-    });
-    for (const id of ids) await ctx.db.patch(id, { pinned: undefined });
-  });
-  const before = await Promise.all(ids.map(get));
-  expect(
-    await t.mutation(internal.posts.migrateSettings, {
-      workspaceId: await workspaceIdOf(t),
-    }),
-  ).toMatchObject({
-    settings: {
-      windows: [{ start: "07:00", end: "09:00" }],
-      intervalMinutes: 45,
-    },
-    legacyPostsPinned: 2,
-    legacyPostsUnpinned: 1,
-  });
-  for (const [index, id] of ids.entries()) {
-    expect(await get(id)).toEqual({
-      ...before[index],
-      pinned: cases[index].pinned,
-    });
-  }
-  // Preserve explicit pins even when they differ from the inferred grid.
-  await t.run(async (ctx) => {
-    await ctx.db.patch(ids[0], { pinned: true });
-    await ctx.db.patch(ids[1], { pinned: false });
-  });
-  const once = await Promise.all(ids.map(get));
-  expect(
-    await t.mutation(internal.posts.migrateSettings, {
-      workspaceId: await workspaceIdOf(t),
-    }),
-  ).toMatchObject({
-    legacyPostsPinned: 0,
-    legacyPostsUnpinned: 0,
-  });
-  expect(await Promise.all(ids.map(get))).toEqual(once);
 });
 
 test("overdue queued posts never pull later posts into the past during compaction", async () => {

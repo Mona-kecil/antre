@@ -4,7 +4,7 @@ import type { MutationCtx } from "../_generated/server";
 import type { OwnedQueryCtx as QueryCtx } from "../access";
 
 type PostValue = Omit<Doc<"posts">, "_id" | "_creationTime">;
-type Stats = Omit<Doc<"postStats">, "_id" | "_creationTime">;
+type Stats = Omit<Doc<"postStats">, "_id" | "_creationTime" | "workspaceId">;
 export const dimensions = ["topic", "angle", "format"] as const;
 export const kinds = [
   "draft",
@@ -76,11 +76,10 @@ function contribute(
 
 async function updateStats(
   ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
   before: Doc<"posts"> | null,
   after: PostValue | null,
 ) {
-  const workspaceId = after?.workspaceId ?? before?.workspaceId;
-  if (!workspaceId) throw new Error("Unbound workspace");
   const row = await ctx.db
     .query("postStats")
     .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
@@ -94,9 +93,9 @@ async function updateStats(
   else await ctx.db.insert("postStats", { ...stats, workspaceId });
 }
 
-// Every post writer, including backfill, records its contribution in the same transaction.
+// Every post writer records its contribution in the same transaction.
 export async function insertPost(ctx: MutationCtx, value: PostValue) {
-  await updateStats(ctx, null, value);
+  await updateStats(ctx, value.workspaceId, null, value);
   return ctx.db.insert("posts", {
     ...value,
     libraryIndexed: true,
@@ -118,7 +117,7 @@ export async function patchPost(
       patch.status.kind !== before.status.kind) ||
     "meta" in patch
   )
-    await updateStats(ctx, before, after);
+    await updateStats(ctx, before.workspaceId, before, after);
   await ctx.db.patch(id, {
     ...patch,
     libraryIndexed: true,
@@ -129,8 +128,8 @@ export async function patchPost(
 export async function deletePost(ctx: MutationCtx, id: Id<"posts">) {
   const before = await ctx.db.get(id);
   if (!before) return;
-  if (before.libraryIndexed) await updateStats(ctx, before, null);
-  if (!before.workspaceId) throw new Error("Unbound workspace");
+  if (before.libraryIndexed)
+    await updateStats(ctx, before.workspaceId, before, null);
   const replies = await ctx.db
     .query("replies")
     .withIndex("workspace_by_postId", (q) =>
@@ -169,14 +168,6 @@ export function postsByKind(
     );
 }
 
-export function unindexedPosts(ctx: QueryCtx) {
-  return ctx.db
-    .query("posts")
-    .withIndex("workspace_by_libraryIndexed", (q) =>
-      q.eq("workspaceId", ctx.workspaceId).eq("libraryIndexed", undefined),
-    );
-}
-
 export async function libraryStats(ctx: QueryCtx) {
   const row = await ctx.db
     .query("postStats")
@@ -185,10 +176,6 @@ export async function libraryStats(ctx: QueryCtx) {
   const stats = row
     ? { counts: row.counts, publishedFacets: row.publishedFacets }
     : emptyStats();
-  // During the online backfill, include legacy contributions without double counting.
-  // Once backfill completes this index range is empty, regardless of history size.
-  for (const post of await unindexedPosts(ctx).collect())
-    contribute(stats, post, 1);
   return stats;
 }
 
@@ -211,28 +198,3 @@ export async function schedulingPosts(ctx: QueryCtx) {
 
 export const creationOrder = (a: Doc<"posts">, b: Doc<"posts">) =>
   a._creationTime - b._creationTime || compareValues(a._id, b._id);
-
-export async function indexPostBatch(
-  ctx: MutationCtx,
-  workspaceId: Id<"workspaces">,
-  posts: Doc<"posts">[],
-) {
-  const row = await ctx.db
-    .query("postStats")
-    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-    .unique();
-  const stats = row
-    ? { counts: row.counts, publishedFacets: row.publishedFacets }
-    : emptyStats();
-  for (const post of posts) {
-    if (post.workspaceId !== workspaceId || post.libraryIndexed)
-      throw new Error("Invalid backfill batch");
-    contribute(stats, post, 1);
-    await ctx.db.patch(post._id, {
-      libraryIndexed: true,
-      rootPublishedId: post.publishedIds[0],
-    });
-  }
-  if (row) await ctx.db.replace(row._id, { ...stats, workspaceId });
-  else await ctx.db.insert("postStats", { ...stats, workspaceId });
-}

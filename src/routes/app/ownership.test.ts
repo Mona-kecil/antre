@@ -1,3 +1,4 @@
+import { insertPost } from "../../../convex/lib/postStore";
 import { afterEach, expect, test, vi } from "vitest";
 import { api } from "../../../convex/_generated/api";
 import {
@@ -95,7 +96,7 @@ async function database(connected = true) {
     parts: [{ text: "Private draft" }],
   });
   await t.run(async (ctx) => {
-    const postId = await ctx.db.insert("posts", {
+    const postId = await insertPost(ctx, {
       workspaceId,
       source: "threads",
       parts: [{ text: "Private published post" }],

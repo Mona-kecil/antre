@@ -30,7 +30,6 @@ import {
   occupiedTimes,
   place,
   readSettings,
-  releaseHeld,
   startPublishing,
   validateSettings,
   validateTime,
@@ -473,8 +472,8 @@ export const fire = internalMutation({
       post.status.at > Date.now()
     )
       return;
-    const workspace = post.workspaceId && (await ctx.db.get(post.workspaceId));
-    if (!workspace || !workspace.ownerId) {
+    const workspace = await ctx.db.get(post.workspaceId);
+    if (!workspace) {
       await ctx.db.patch(id, {
         status: {
           kind: "held",
@@ -592,68 +591,3 @@ export const updateSettings = ownerMutation(
     return value;
   },
 );
-
-// Run once after deploying the bridge schema. Safe to rerun.
-export const migrateSettings = internalMutation({
-  args: { workspaceId: v.id("workspaces") },
-  handler: async (base, { workspaceId }) => {
-    const ctx = await workspaceContext(base, workspaceId);
-    const value = await readSettings(ctx);
-    const row = await ctx.db
-      .query("settings")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
-      .unique();
-    if (row)
-      await ctx.db.replace(row._id, { ...value, workspaceId: ctx.workspaceId });
-    else
-      await ctx.db.insert("settings", {
-        ...value,
-        workspaceId: ctx.workspaceId,
-      });
-    let pinned = 0;
-    let unpinned = 0;
-    let recovered = 0;
-    for (const post of [
-      ...(await postsByKind(ctx, "queued").collect()),
-      ...(await postsByKind(ctx, "failed").collect()),
-    ]) {
-      if (post.status.kind === "queued" && post.pinned === undefined) {
-        const isPinned =
-          nextSlot(value, new Set(), post.status.at - 1) !== post.status.at;
-        await patchPost(ctx, post._id, { pinned: isPinned });
-        if (isPinned) pinned++;
-        else unpinned++;
-      }
-      if (
-        post.status.kind === "failed" &&
-        post.status.error === "Threads account needs reconnecting"
-      ) {
-        await patchPost(ctx, post._id, {
-          status: {
-            kind: "held",
-            at: post.status.at,
-            heldAt: Date.now(),
-            reason: post.status.error,
-          },
-        });
-        recovered++;
-      }
-    }
-    const account = await ctx.db
-      .query("account")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
-      .unique();
-    if (
-      account &&
-      !account.needsReconnect &&
-      account.tokenExpiresAt > Date.now()
-    )
-      await releaseHeld(ctx);
-    return {
-      settings: value,
-      legacyPostsPinned: pinned,
-      legacyPostsUnpinned: unpinned,
-      authFailuresRecovered: recovered,
-    };
-  },
-});

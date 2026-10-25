@@ -1,6 +1,8 @@
 # Public workspace rollout
 
-This procedure has not run against production. Keep the existing owner's data private throughout the cutover. The schema accepts legacy rows during the migration, but runtime access and dispatch require a bound workspace. Do not treat an optional `workspaceId` as permission to use a default owner.
+The production ownership migration has run, as reported by the operator: `migrations:backfill` returned done, `migrations:bindLegacyOwner` bound the owner, and `migrations:check` returned `{ready:true, errors:[]}`. Every owned row has a workspace, the workspace has an owner, and the production settings row uses `windows`, `gapPolicy`, `intervalMinutes`, `timeZone`, and `workspaceId`.
+
+The schema was then tightened in source to require ownership and accept only the current settings shape. This source change has not been deployed or checked against production here. The sections below preserve the cutover procedure and its historical migration commands; those functions have now been removed from the source.
 
 ## Local verification
 
@@ -12,7 +14,7 @@ The browser checks covered desktop and phone layouts, demo draft and queue opera
 
 An independent GPT-6-astra review found two defects: a replaced LinkedIn token could strand an unsent attempt, and a full batch of new legacy rows could skip rebuilding a completed migration. Both fixes passed re-review. Each regression test failed against the earlier source. Cross-family review could not run because the Claude requests hit rate limits.
 
-Hosted session refresh, completed asynchronous deletion, migration and backup-restore rehearsal, verified production owner binding, and non-owner provider approval and publication remain unverified. The steps below cover the production rollout. The decision trail is in `.audit/public-workspaces.tsv`.
+Hosted session refresh, completed asynchronous deletion, migration and backup-restore rehearsal, and non-owner provider approval and publication remain unverified by the local checks above. Production owner binding and migration readiness were later reported by the operator, as recorded above. The steps below cover the production rollout. The decision trail is in `.audit/public-workspaces.tsv`.
 
 ## Prepare
 
@@ -26,7 +28,7 @@ The web and backend authorization boundaries change together. The old web server
 
 ## Backfill and bind
 
-Run these commands only after selecting the intended deployment. The examples use `--prod` to make the target explicit; a development rehearsal must omit it and target development.
+These commands describe the migration-capable backend used for the completed cutover. They are historical references and are unavailable after deploying the tightened source. The examples used `--prod` to make the target explicit; development rehearsals omitted it and targeted development.
 
 Deploy the migration-capable backend, then save its initial inventory:
 
@@ -66,14 +68,20 @@ Deploy the matching web build. Verify the owner sees the migrated workspace afte
 
 Check personal agent access and revoke a test key. Keep `iso` and `wib` fields in MCP responses. Check that the public landing and demo work without a session and that demo edits produce no backend writes.
 
-Remove the old `ANTRE_SECRET`, `SESSION_SECRET`, and global `MCP_TOKEN` from normal runtime configuration after migration and agent verification. Reopen signup and writes only when these checks pass.
+Remove the old `ANTRE_SECRET`, `SESSION_SECRET`, and global `MCP_TOKEN` from normal runtime configuration after migration and agent verification. Reopen signup and writes only when these checks pass and the required-ownership schema has been deployed.
 
 ## Tighten the schema
 
-This branch retains optional ownership only to support the existing-data migration. After every row is bound, make ownership required in a follow-up schema deployment and remove legacy settings adapters after converting those rows. Rehearse the schema push against migrated development data first. Do not push a required-field schema before backfill, and do not claim that source changes have migrated stored production data.
+After the reported migration, this source makes every owned `workspaceId`, provider receipt `workspaceId`, and workspace `ownerId` required. It removes the old settings shape, settings adapters, and ownership/settings/library migration functions. Runtime authorization still checks workspace identity, existence, and active state.
+
+The optional `legacy: true` marker and `workspaceMigrations` table remain accepted because the completed migration wrote them to production. No runtime path reads the marker; its lookup index has been removed. Cleanup still removes migration progress rows with their workspace. Removing these stored fields requires a separate data cleanup before removing their validators.
+
+Provider callback receipts retain their workspace ID after workspace deletion until expiry. Convex IDs are not foreign keys. Verified callbacks for unknown profiles use a separate global completion receipt with no workspace data; they never create or claim a workspace.
+
+Rehearse the schema push against migrated development data before deployment. Convex validates existing documents on deploy: the required-field schema should be accepted when all stored documents satisfy it, and must fail if any owned row lacks `workspaceId`, any workspace lacks `ownerId`, or any settings row still has the old shape. No schema push was run for this change.
 
 ## Recovery
 
-If a gate fails, keep signup and writes closed. Save the inventory and error before changing state. Repeated backfill and the same owner binding must converge on the same workspace. Do not bind a different user to work around an error.
+If a gate fails, keep signup and writes closed. Save the inventory and error before changing state. On the historical migration-capable backend, repeated backfill and the same owner binding were designed to converge on the same workspace. Do not bind a different user to work around an error.
 
 A code rollback must account for data written by multiple workspaces: the old singleton queries cannot read a public deployment after additional users have signed up. Restore from the pre-cutover backup only while writes remain blocked and after reconciling any remote publications made during the window. Remote posts are outside the database backup.

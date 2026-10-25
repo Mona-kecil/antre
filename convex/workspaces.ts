@@ -248,10 +248,8 @@ export const cleanup = internalMutation({
           status: "complete",
           workspaceId: undefined,
         });
-      if (workspace.ownerId) await ctx.db.delete(workspace.ownerId);
+      await ctx.db.delete(workspace.ownerId);
       await ctx.db.delete(workspaceId);
     }
   },
 });
-
-export { bindLegacyOwner } from "./migrations";

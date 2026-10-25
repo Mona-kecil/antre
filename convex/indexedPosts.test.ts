@@ -38,6 +38,8 @@ async function seedHistory(t: Test, published: number, drafts = 0) {
       for (let i = start; i < Math.min(start + 100, published + drafts); i++) {
         await ctx.db.insert("posts", {
           workspaceId: await fixtureWorkspace(ctx),
+          libraryIndexed: true,
+          rootPublishedId: i < published ? `history-${i}` : undefined,
           parts: [{ text: `history ${i} ${"x".repeat(200)}` }],
           publishedIds: i < published ? [`history-${i}`] : [],
           source: "threads",
@@ -54,18 +56,20 @@ async function seedHistory(t: Test, published: number, drafts = 0) {
       }
     });
   }
-}
-
-async function backfill(t: Test) {
-  let indexed = 0;
-  for (let i = 0; i < 100; i++) {
-    const result = await t.mutation(internal.library.backfillPostStats, {
-      workspaceId: await workspaceIdOf(t),
+  await t.run(async (ctx) => {
+    await ctx.db.insert("postStats", {
+      workspaceId: await fixtureWorkspace(ctx),
+      counts: { drafts, published, scheduled: 0, failed: 0 },
+      publishedFacets: (
+        [
+          { dimension: "topic", code: "T1", count: Math.floor(published / 2) },
+          { dimension: "topic", code: "T2", count: Math.ceil(published / 2) },
+          { dimension: "angle", code: "A1", count: published },
+          { dimension: "format", code: "F1", count: published },
+        ] satisfies Doc<"postStats">["publishedFacets"]
+      ).filter((facet) => facet.count > 0),
     });
-    indexed += result.indexed;
-    if (result.done) return indexed;
-  }
-  throw new Error("Backfill did not finish");
+  });
 }
 
 const draft = (t: Test, text: string) =>
@@ -78,7 +82,7 @@ const draft = (t: Test, text: string) =>
 test("queue, move, swap, compaction, reconnect, sweep and schedule ignore historical posts and drafts", async () => {
   const results = [];
   for (const history of [0, 2000]) {
-    // A history scan would exceed this budget; seed writes do not read posts.
+    // A history scan would exceed this budget.
     const t = await ownerTest({
       transactionLimits: { documentsRead: 500 },
     });
@@ -164,13 +168,11 @@ test("queue, move, swap, compaction, reconnect, sweep and schedule ignore histor
   expect(results[1]).toEqual(results[0]);
 });
 
-test("default published page stays below a fixed read budget after a batched backfill", async () => {
+test("default published page stays below a fixed read budget with indexed history", async () => {
   const t = await ownerTest({
     transactionLimits: { documentsRead: 500 },
   });
   await seedHistory(t, 2000, 1200);
-  expect(await backfill(t)).toBe(3200);
-  expect(await backfill(t)).toBe(0);
   const page = await t.query(api.library.page, { view: "published" });
   expect(page.items).toHaveLength(25);
   expect(
@@ -352,44 +354,6 @@ test("counts and facets match a recount across all views through status and tag 
   await assertRecount(t);
 });
 
-test("backfill matches a recount and remains idempotent with edits, imports and deletes between batches", async () => {
-  const t = await ownerTest();
-  await seedHistory(t, 120, 25);
-  const before = await t.query(api.library.page, { view: "published" });
-  const first = await t.mutation(internal.library.backfillPostStats, {
-    workspaceId: await workspaceIdOf(t),
-  });
-  expect(first.indexed).toBe(100);
-  expect(first.done).toBe(false);
-  const legacy = await t.run(async (ctx) =>
-    ctx.db
-      .query("posts")
-      .withIndex("by_libraryIndexed", (q) => q.eq("libraryIndexed", undefined))
-      .collect(),
-  );
-  await t.mutation(api.library.tagPosts, {
-    posts: [{ id: legacy[0]._id, meta: { topic: "T3" } }],
-  });
-  await t.mutation(api.posts.deletePost, { id: legacy[1]._id });
-  await t.mutation(internal.sync.importPage, {
-    workspaceId: await workspaceIdOf(t),
-    posts: [
-      { id: "new-import", text: "match", at: now - day, permalink: "url" },
-    ],
-  });
-  await assertRecount(t);
-  await backfill(t);
-  await assertRecount(t);
-  const stats = await t.run(async (ctx) => ctx.db.query("postStats").unique());
-  expect(await backfill(t)).toBe(0);
-  expect(
-    await t.run(async (ctx) => ctx.db.query("postStats").unique()),
-  ).toEqual(stats);
-  expect((await t.query(api.library.page, { view: "published" })).total).toBe(
-    before.total,
-  );
-});
-
 test("published date pagination preserves id ties and search preserves creation-order score ties", async () => {
   const t = await ownerTest();
   await t.run(async (ctx) => {
@@ -427,7 +391,6 @@ test("sync removal pages cross deleted cursors, verify current rows and keep cou
     transactionLimits: { documentsRead: 500 },
   });
   await seedHistory(t, 1200);
-  await backfill(t);
   let cursor: string | null = null;
   let removed = 0;
   let preserved = 0;

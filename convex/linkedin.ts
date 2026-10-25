@@ -20,7 +20,10 @@ import { nextSlot, validateSettings, validateTime } from "./lib/scheduling";
 import { queueSettings } from "./schema";
 
 type Post = Doc<"linkedinPosts">;
-type Settings = Omit<Doc<"linkedinSettings">, "_id" | "_creationTime">;
+type Settings = Omit<
+  Doc<"linkedinSettings">,
+  "_id" | "_creationTime" | "workspaceId"
+>;
 const postId = { id: v.id("linkedinPosts") };
 const UNKNOWN =
   "LinkedIn may have published this post. Check your profile before retrying; another attempt may create a duplicate.";
@@ -229,21 +232,8 @@ async function beginPublishing(
   post: Post,
   at: number,
 ) {
-  if (!post.workspaceId) {
-    await base.db.patch(post._id, {
-      status: {
-        kind: "held",
-        at,
-        heldAt: Date.now(),
-        reason: "auth",
-        error: "Unbound workspace",
-      },
-    });
-    console.error("Unbound LinkedIn post", { id: post._id });
-    return;
-  }
   const workspace = await base.db.get(post.workspaceId);
-  if (!workspace || !workspace.ownerId) {
+  if (!workspace) {
     await base.db.patch(post._id, {
       status: {
         kind: "held",
@@ -471,10 +461,14 @@ function item(post: Post) {
         : null,
   };
 }
-export const get = ownerQuery(postId, async (ctx: QueryCtx, { id }) => {
-  const post = await ctx.db.get(id);
-  return post?.workspaceId === ctx.workspaceId ? item(post) : null;
-});
+export const get = ownerQuery(
+  { id: v.string() },
+  async (ctx: QueryCtx, { id }) => {
+    const postId = ctx.db.normalizeId("linkedinPosts", id);
+    const post = postId && (await ctx.db.get(postId));
+    return post && post.workspaceId === ctx.workspaceId ? item(post) : null;
+  },
+);
 
 const viewFor = (post: Post) =>
   post.status.kind === "draft"
@@ -681,8 +675,6 @@ export const fire = internalMutation({
       return;
     await beginPublishing(ctx, post, post.status.at);
     if (
-      post.workspaceId &&
-      (await ctx.db.get(post.workspaceId))?.ownerId &&
       (await ctx.db.get(post.workspaceId))?.state === "active" &&
       (await ctx.db.get(id))?.status.kind === "held"
     )
@@ -697,9 +689,9 @@ export const publishingInput = internalQuery({
   args: postId,
   handler: async (ctx, { id }) => {
     const post = await ctx.db.get(id);
-    const workspace = post?.workspaceId && (await ctx.db.get(post.workspaceId));
+    const workspace = post && (await ctx.db.get(post.workspaceId));
     const account =
-      workspace?.state === "active" && workspace.ownerId
+      workspace?.state === "active"
         ? await ctx.db
             .query("linkedinAccount")
             .withIndex("by_workspace", (q) =>
@@ -721,9 +713,9 @@ export const claimDispatch = internalMutation({
       post.status.dispatchedAt !== undefined
     )
       return false;
-    const workspace = post.workspaceId && (await ctx.db.get(post.workspaceId));
+    const workspace = await ctx.db.get(post.workspaceId);
     const account =
-      workspace?.state === "active" && workspace.ownerId
+      workspace?.state === "active"
         ? await ctx.db
             .query("linkedinAccount")
             .withIndex("by_workspace", (q) =>
@@ -808,10 +800,7 @@ export const complete = internalMutation({
           error: `${result.error} ${UNKNOWN}`,
         },
       });
-      if (
-        post.workspaceId &&
-        (await ctx.db.get(post.workspaceId))?.state === "active"
-      )
+      if ((await ctx.db.get(post.workspaceId))?.state === "active")
         await compact(await workspaceContext(ctx, post.workspaceId), at);
     } else {
       const account = await ctx.db
@@ -829,10 +818,7 @@ export const complete = internalMutation({
           error: result.error,
         },
       });
-      if (
-        post.workspaceId &&
-        (await ctx.db.get(post.workspaceId))?.state === "active"
-      )
+      if ((await ctx.db.get(post.workspaceId))?.state === "active")
         await compact(await workspaceContext(ctx, post.workspaceId), at);
       if (
         account &&
@@ -961,10 +947,8 @@ export const sweepStuck = internalMutation({
       .withIndex("by_kind_at", (q) => q.eq("status.kind", "publishing"))
       .collect();
     for (const post of posts) {
-      const workspace =
-        post.workspaceId && (await ctx.db.get(post.workspaceId));
-      if (!workspace || workspace.state !== "active" || !workspace.ownerId)
-        continue;
+      const workspace = await ctx.db.get(post.workspaceId);
+      if (!workspace || workspace.state !== "active") continue;
       if (
         post.status.kind !== "publishing" ||
         post.status.startedAt > Date.now() - 15 * 60_000

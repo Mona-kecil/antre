@@ -10,8 +10,11 @@ import type {
 } from "../access";
 import { patchPost, schedulingPosts } from "./postStore";
 
-export type QueueSettings = Extract<Doc<"settings">, { windows: unknown }>;
-type SettingsValue = Omit<QueueSettings, "_id" | "_creationTime">;
+export type QueueSettings = Doc<"settings">;
+type SettingsValue = Omit<
+  QueueSettings,
+  "_id" | "_creationTime" | "workspaceId"
+>;
 
 export const defaultSettings = {
   windows: [{ start: "06:00", end: "12:00" }],
@@ -34,21 +37,12 @@ export async function readSettings(ctx: QueryCtx): Promise<SettingsValue> {
     if (!workspace) throw new Error("Workspace unavailable");
     return { ...defaultSettings, timeZone: workspace.timeZone };
   }
-  // Only this adapter reads the legacy shape during the migration deployment.
-  return validateSettings(
-    "windows" in row
-      ? {
-          windows: row.windows,
-          intervalMinutes: row.intervalMinutes,
-          timeZone: row.timeZone,
-          gapPolicy: row.gapPolicy,
-        }
-      : {
-          ...defaultSettings,
-          intervalMinutes: row.intervalMinutes,
-          windows: [{ start: row.windowStart, end: row.windowEnd }],
-        },
-  );
+  return validateSettings({
+    windows: row.windows,
+    intervalMinutes: row.intervalMinutes,
+    timeZone: row.timeZone,
+    gapPolicy: row.gapPolicy,
+  });
 }
 
 export function occupiedTimes(posts: Doc<"posts">[]) {
