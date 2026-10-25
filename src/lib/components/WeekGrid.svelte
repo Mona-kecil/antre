@@ -38,7 +38,10 @@
 		for (const marks of cells.values()) marks.sort((a, b) => urgency.indexOf(a.kind) - urgency.indexOf(b.kind) || a.at - b.at);
 		return cells;
 	}
-	const firstLine = (mark: WeekMark) => mark.text.split('\n')[0];
+	const firstLine = (mark: WeekMark) => {
+		const line = mark.text.split('\n')[0];
+		return line.length > 60 ? `${line.slice(0, 59).trimEnd()}…` : line;
+	};
 	const describe = (marks: WeekMark[]) =>
 		marks.length === 1
 			? `${short(marks[0].at)} · ${firstLine(marks[0])}`
