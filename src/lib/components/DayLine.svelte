@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { clock, minutes, slots } from '#lib/time.ts';
+	import { clock as formatClock, slots } from '#lib/time.ts';
 
 	type Mark = { id: string; at: number; kind: string; color: string };
 	let {
@@ -12,7 +12,7 @@
 		onselect
 	}: {
 		day: number;
-		settings: { windows: { start: string; end: string }[]; intervalMinutes: number };
+		settings: { timeZone: string; windows: { start: string; end: string }[]; intervalMinutes: number };
 		posts: Mark[];
 		now: number;
 		nextSlot: number | null;
@@ -24,32 +24,34 @@
 	const Y = 42;
 	const PAD = 16;
 	let width = $state(358);
+	// A hidden DayLine measures 0px; keep the scale positive so shapes stay valid.
+	const inner = $derived(Math.max(1, width - PAD * 2));
 	let scrub = $state<number | null>(null);
 
+	const clock = (at: number) => formatClock(at, settings.timeZone);
+	const tracks = $derived(settings.windows.flatMap((window) => {
+		const times = slots(day, { ...settings, windows: [window] });
+		const start = times.at(0);
+		const end = times.at(-1);
+		return start === undefined || end === undefined ? [] : [{ start, end }];
+	}));
 	const span = $derived.by(() => {
-		const ends = settings.windows.flatMap((w) => [minutes(w.start), minutes(w.end)]);
-		const times = posts.map((post) => (post.at - day) / 60_000);
-		const lo = Math.min(...ends, ...times);
-		const hi = Math.max(...ends, ...times);
-		const pad = Math.max(settings.intervalMinutes / 2, 10);
-		return { from: day + (lo - pad) * 60_000, to: day + (hi + pad) * 60_000 };
+		const times = [...tracks.flatMap((track) => [track.start, track.end]), ...posts.map((post) => post.at)];
+		const lo = times.length ? Math.min(...times) : day;
+		const hi = times.length ? Math.max(...times) : day;
+		const pad = Math.max(settings.intervalMinutes / 2, 10) * 60_000;
+		return { from: lo - pad, to: hi + pad };
 	});
 	const x = (at: number) =>
-		PAD + ((at - span.from) / (span.to - span.from)) * (width - PAD * 2);
+		PAD + ((at - span.from) / (span.to - span.from)) * inner;
 	const timeAt = (px: number) =>
-		span.from + ((px - PAD) / (width - PAD * 2)) * (span.to - span.from);
+		span.from + ((px - PAD) / inner) * (span.to - span.from);
 
 	const pitch = $derived(x(span.from + settings.intervalMinutes * 60_000) - x(span.from));
 	const bar = $derived(Math.max(3, Math.min(12, pitch * 0.62)));
 	const taken = $derived(new Set(posts.map((post) => post.at)));
 	const free = $derived(slots(day, settings).filter((at) => at > now && !taken.has(at)));
 	const showFree = $derived(pitch >= 5);
-	const tracks = $derived(
-		settings.windows.map((w) => ({
-			start: day + minutes(w.start) * 60_000,
-			end: day + minutes(w.end) * 60_000
-		}))
-	);
 	const index = $derived(posts.findIndex((post) => post.id === selected));
 	const current = $derived(posts[index]);
 

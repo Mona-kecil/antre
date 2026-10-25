@@ -1,11 +1,13 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
+import {
+  connectThreads,
+  fixtureWorkspace,
+  ownerTest,
+  workspaceIdOf,
+} from "./testing/workspace.test-support";
 
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
 const wib = (time: string) => Date.parse(`${time}+07:00`);
 const day = 86_400_000;
 const settings = {
@@ -16,22 +18,20 @@ const settings = {
 };
 
 async function setup(gapPolicy: "autoFill" | "keepTimes" = "keepTimes") {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const account = {
     threadsUserId: "owner",
     username: "owner",
     accessToken: "token",
     tokenExpiresAt: Date.now() + 60 * day,
   };
-  await t.mutation(api.account.connect, { secret, ...account });
+  await connectThreads(t, { ...account });
   await t.mutation(api.posts.updateSettings, {
-    secret,
     ...settings,
     gapPolicy,
   });
   const draft = (text: string) =>
     t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text }],
     });
@@ -60,7 +60,6 @@ async function setup(gapPolicy: "autoFill" | "keepTimes" = "keepTimes") {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(wib("2026-10-19T05:45:00"));
-  vi.stubEnv("ANTRE_SECRET", secret);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -73,7 +72,7 @@ test.each([false, true])(
   async (expired) => {
     const { t, draft, get, fire, block } = await setup();
     const id = await draft("blocked");
-    const at = await t.mutation(api.posts.queue, { secret, id });
+    const at = await t.mutation(api.posts.queue, { id });
     await block(expired);
     vi.setSystemTime(at);
     await fire(id);
@@ -81,9 +80,9 @@ test.each([false, true])(
       status: { kind: "held", at, heldAt: at },
       pinned: false,
     });
-    const account = await t.query(api.account.current, { secret });
+    const account = await t.query(api.account.current, {});
     expect(account).toMatchObject({ needsReconnect: true });
-    expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    expect(await t.query(api.posts.listQueue, {})).toMatchObject([
       {
         _id: id,
         at,
@@ -94,7 +93,7 @@ test.each([false, true])(
       },
     ]);
     expect(
-      await t.query(api.library.page, { secret, view: "scheduled" }),
+      await t.query(api.library.page, { view: "scheduled" }),
     ).toMatchObject({
       items: [{ id, at, held: true, pinned: false, status: { kind: "held" } }],
       counts: { scheduled: 1, failed: 0 },
@@ -116,15 +115,14 @@ test.each(["autoFill", "keepTimes"] as const)(
     ]) {
       const id = await draft(text);
       ids.push(id);
-      await t.mutation(api.posts.queue, { secret, id });
+      await t.mutation(api.posts.queue, { id });
     }
     const pin = await draft("pinned");
     const pinAt = wib("2026-10-19T08:00:00");
-    await t.mutation(api.posts.queue, { secret, id: pin, at: pinAt });
+    await t.mutation(api.posts.queue, { id: pin, at: pinAt });
     // A collision with the first held post's next-day clock time.
     const nextDayPin = await draft("next day pin");
     await t.mutation(api.posts.queue, {
-      secret,
       id: nextDayPin,
       at: wib("2026-10-20T06:00:00"),
     });
@@ -135,8 +133,7 @@ test.each(["autoFill", "keepTimes"] as const)(
     await fire(ids[1]);
     const laterBefore = await Promise.all(ids.slice(2).map(get));
     vi.setSystemTime(wib("2026-10-19T06:45:00"));
-    await t.mutation(api.account.connect, {
-      secret,
+    await connectThreads(t, {
       ...account,
       accessToken: "new-token",
     });
@@ -181,8 +178,7 @@ test.each(["autoFill", "keepTimes"] as const)(
       ).toBe(gapPolicy === "autoFill" ? "canceled" : "pending");
     }
     const once = await Promise.all(ids.map(get));
-    await t.mutation(api.account.connect, {
-      secret,
+    await connectThreads(t, {
       ...account,
       accessToken: "another-token",
     });
@@ -199,13 +195,12 @@ test.each(["unqueue", "deletePost", "publishNow"] as const)(
       const id = await draft(text);
       ids.push(id);
       await t.mutation(api.posts.queue, {
-        secret,
         id,
         ...(text === "pin" ? { at: wib("2026-10-19T07:00:00") } : {}),
       });
     }
     const before = await Promise.all(ids.slice(1).map(get));
-    await t.mutation(api.posts[operation], { secret, id: ids[0] });
+    await t.mutation(api.posts[operation], { id: ids[0] });
     expect(
       (await Promise.all(ids.slice(1).map(get))).map((post) => ({
         at: post?.status.kind === "queued" ? post.status.at : null,
@@ -234,21 +229,21 @@ test("move/swap exchange pins, reject past/taken times, cancel jobs, and fence s
   const { t, draft, get } = await setup();
   const first = await draft("first");
   const second = await draft("second");
-  const oldAt = await t.mutation(api.posts.queue, { secret, id: first });
+  const oldAt = await t.mutation(api.posts.queue, { id: first });
   const pinnedAt = wib("2026-10-19T07:00:00");
-  await t.mutation(api.posts.queue, { secret, id: second, at: pinnedAt });
+  await t.mutation(api.posts.queue, { id: second, at: pinnedAt });
   const before = await get(first);
   if (before?.status.kind !== "queued") throw new Error("Expected queued post");
   const oldJob = before.status.jobId;
   const generation = before.status.generation;
   await expect(
-    t.mutation(api.posts.move, { secret, id: first, at: Date.now() }),
+    t.mutation(api.posts.move, { id: first, at: Date.now() }),
   ).rejects.toThrow("future");
   await expect(
-    t.mutation(api.posts.move, { secret, id: first, at: pinnedAt }),
+    t.mutation(api.posts.move, { id: first, at: pinnedAt }),
   ).rejects.toThrow("already taken");
   const movedAt = wib("2026-10-19T08:00:00");
-  await t.mutation(api.posts.move, { secret, id: first, at: movedAt });
+  await t.mutation(api.posts.move, { id: first, at: movedAt });
   expect(await get(first)).toMatchObject({
     pinned: true,
     status: { kind: "queued", at: movedAt },
@@ -271,10 +266,10 @@ test("move/swap exchange pins, reject past/taken times, cancel jobs, and fence s
   });
   expect(fetch).not.toHaveBeenCalled();
   vi.setSystemTime(oldAt - 60_000);
-  expect(await t.mutation(api.posts.move, { secret, id: first })).toBe(oldAt);
+  expect(await t.mutation(api.posts.move, { id: first })).toBe(oldAt);
   const firstBeforeSwap = await get(first);
   const secondBeforeSwap = await get(second);
-  await t.mutation(api.posts.swap, { secret, id: first, otherId: second });
+  await t.mutation(api.posts.swap, { id: first, otherId: second });
   expect(await get(first)).toMatchObject({
     pinned: true,
     status: { kind: "queued", at: pinnedAt },
@@ -291,32 +286,29 @@ test("move/swap exchange pins, reject past/taken times, cancel jobs, and fence s
     ).toBe("canceled");
   }
   await expect(
-    t.mutation(api.posts.swap, { secret, id: first, otherId: first }),
+    t.mutation(api.posts.swap, { id: first, otherId: first }),
   ).rejects.toThrow("different");
 });
 
 test("settings sort and validate windows; slots span windows and WIB days without moving existing jobs", async () => {
   const { t, draft, get } = await setup();
   const existing = await draft("existing");
-  await t.mutation(api.posts.queue, { secret, id: existing });
+  await t.mutation(api.posts.queue, { id: existing });
   const before = await get(existing);
   const windows = [
     { start: "13:00", end: "13:30" },
     { start: "06:00", end: "06:30" },
   ];
   const value = await t.mutation(api.posts.updateSettings, {
-    secret,
     ...settings,
     windows,
   });
   expect(value.windows).toEqual([...windows].reverse());
-  expect(await t.query(api.posts.getSettings, { secret })).toEqual(value);
+  expect(await t.query(api.posts.getSettings, {})).toEqual(value);
   expect(await get(existing)).toEqual(before);
   const at = [];
   for (const text of ["a", "b", "c", "d"]) {
-    at.push(
-      await t.mutation(api.posts.queue, { secret, id: await draft(text) }),
-    );
+    at.push(await t.mutation(api.posts.queue, { id: await draft(text) }));
   }
   expect(at).toEqual(
     [
@@ -336,13 +328,12 @@ test("settings sort and validate windows; slots span windows and WIB days withou
     ],
   ]) {
     await expect(
-      t.mutation(api.posts.updateSettings, { secret, ...settings, windows }),
+      t.mutation(api.posts.updateSettings, { ...settings, windows }),
     ).rejects.toThrow();
   }
   for (const intervalMinutes of [4, 241, 5.5]) {
     await expect(
       t.mutation(api.posts.updateSettings, {
-        secret,
         ...settings,
         intervalMinutes,
       }),
@@ -353,13 +344,14 @@ test("settings sort and validate windows; slots span windows and WIB days withou
 test("legacy settings migrate once, protect queued times, and recover the incident's auth failures", async () => {
   const { t, draft, get, account, block } = await setup();
   const id = await draft("legacy queued");
-  const at = await t.mutation(api.posts.queue, { secret, id });
+  const at = await t.mutation(api.posts.queue, { id });
   const failed = await draft("incident");
   await block();
   await t.run(async (ctx) => {
     const row = await ctx.db.query("settings").unique();
     if (!row) throw new Error("Missing settings");
     await ctx.db.replace(row._id, {
+      workspaceId: await fixtureWorkspace(ctx),
       windowStart: "08:00",
       windowEnd: "10:00",
       intervalMinutes: 60,
@@ -374,12 +366,16 @@ test("legacy settings migrate once, protect queued times, and recover the incide
       },
     });
   });
-  expect(await t.query(api.posts.getSettings, { secret })).toEqual({
+  expect(await t.query(api.posts.getSettings, {})).toEqual({
     ...settings,
     windows: [{ start: "08:00", end: "10:00" }],
     intervalMinutes: 60,
   });
-  expect(await t.mutation(internal.posts.migrateSettings, {})).toMatchObject({
+  expect(
+    await t.mutation(internal.posts.migrateSettings, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     legacyPostsPinned: 1,
     authFailuresRecovered: 1,
   });
@@ -388,14 +384,19 @@ test("legacy settings migrate once, protect queued times, and recover the incide
     status: { kind: "queued", at },
   });
   expect(await get(failed)).toMatchObject({ status: { kind: "held", at } });
-  const migrated = await t.run((ctx) => ctx.db.query("settings").unique());
+  const migrated = await t.run(async (ctx) =>
+    ctx.db.query("settings").unique(),
+  );
   expect(migrated).not.toHaveProperty("windowStart");
-  expect(await t.mutation(internal.posts.migrateSettings, {})).toMatchObject({
+  expect(
+    await t.mutation(internal.posts.migrateSettings, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     legacyPostsPinned: 0,
     authFailuresRecovered: 0,
   });
-  await t.mutation(api.account.connect, {
-    secret,
+  await connectThreads(t, {
     ...account,
     accessToken: "new-token",
   });
@@ -416,7 +417,6 @@ test("migration classifies legacy times on the legacy grid and preserves set pin
     const id = await draft(time);
     ids.push(id);
     await t.mutation(api.posts.queue, {
-      secret,
       id,
       at: wib(`2026-10-19T${time}`),
     });
@@ -425,6 +425,7 @@ test("migration classifies legacy times on the legacy grid and preserves set pin
     const row = await ctx.db.query("settings").unique();
     if (!row) throw new Error("Missing settings");
     await ctx.db.replace(row._id, {
+      workspaceId: await fixtureWorkspace(ctx),
       windowStart: "07:00",
       windowEnd: "09:00",
       intervalMinutes: 45,
@@ -433,7 +434,11 @@ test("migration classifies legacy times on the legacy grid and preserves set pin
     for (const id of ids) await ctx.db.patch(id, { pinned: undefined });
   });
   const before = await Promise.all(ids.map(get));
-  expect(await t.mutation(internal.posts.migrateSettings, {})).toMatchObject({
+  expect(
+    await t.mutation(internal.posts.migrateSettings, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     settings: {
       windows: [{ start: "07:00", end: "09:00" }],
       intervalMinutes: 45,
@@ -453,7 +458,11 @@ test("migration classifies legacy times on the legacy grid and preserves set pin
     await ctx.db.patch(ids[1], { pinned: false });
   });
   const once = await Promise.all(ids.map(get));
-  expect(await t.mutation(internal.posts.migrateSettings, {})).toMatchObject({
+  expect(
+    await t.mutation(internal.posts.migrateSettings, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     legacyPostsPinned: 0,
     legacyPostsUnpinned: 0,
   });
@@ -473,16 +482,15 @@ test("overdue queued posts never pull later posts into the past during compactio
   ]) {
     const id = await draft(text);
     ids.push(id);
-    await t.mutation(api.posts.queue, { secret, id });
+    await t.mutation(api.posts.queue, { id });
   }
-  await t.mutation(api.posts.unqueue, { secret, id: ids[2] });
+  await t.mutation(api.posts.unqueue, { id: ids[2] });
   await t.mutation(api.posts.updateSettings, {
-    secret,
     ...settings,
     gapPolicy: "autoFill",
   });
   vi.setSystemTime(wib("2026-10-19T08:00:00"));
-  await t.mutation(api.posts.unqueue, { secret, id: ids[0] });
+  await t.mutation(api.posts.unqueue, { id: ids[0] });
   expect(await get(ids[3])).toMatchObject({
     status: { kind: "queued", at: wib("2026-10-19T07:30:00") },
   });
@@ -495,24 +503,21 @@ test("autoFill uses earlier free windows after the owner changes the windows", a
   const { t, draft, get } = await setup("autoFill");
   const removed = await draft("removed");
   await t.mutation(api.posts.queue, {
-    secret,
     id: removed,
     at: wib("2026-10-19T10:00:00"),
   });
   await t.mutation(api.posts.updateSettings, {
-    secret,
     ...settings,
     gapPolicy: "autoFill",
     windows: [{ start: "11:00", end: "12:00" }],
   });
   const later = await draft("later");
-  await t.mutation(api.posts.queue, { secret, id: later });
+  await t.mutation(api.posts.queue, { id: later });
   await t.mutation(api.posts.updateSettings, {
-    secret,
     ...settings,
     gapPolicy: "autoFill",
   });
-  await t.mutation(api.posts.unqueue, { secret, id: removed });
+  await t.mutation(api.posts.unqueue, { id: removed });
   expect(await get(later)).toMatchObject({
     pinned: false,
     status: { kind: "queued", at: wib("2026-10-19T06:00:00") },
@@ -524,7 +529,7 @@ test("the scheduler holds blocked posts without sending a Threads request", asyn
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   const ids = [await draft("first"), await draft("second")];
-  for (const id of ids) await t.mutation(api.posts.queue, { secret, id });
+  for (const id of ids) await t.mutation(api.posts.queue, { id });
   await block();
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(
@@ -538,16 +543,14 @@ test("schedule returns one WIB day, a day strip, held count, and the next free s
   const first = await draft("first");
   const second = await draft("second");
   const tomorrow = await draft("tomorrow");
-  await t.mutation(api.posts.queue, { secret, id: first });
-  await t.mutation(api.posts.queue, { secret, id: second });
+  await t.mutation(api.posts.queue, { id: first });
+  await t.mutation(api.posts.queue, { id: second });
   await t.mutation(api.posts.queue, {
-    secret,
     id: tomorrow,
     at: wib("2026-10-20T07:15:00"),
   });
   const today = wib("2026-10-19T00:00:00");
   const view = await t.query(api.posts.schedule, {
-    secret,
     from: today,
     days: 7,
     day: today,
@@ -568,6 +571,6 @@ test("schedule returns one WIB day, a day strip, held count, and the next free s
     account: { username: "owner", needsReconnect: false },
   });
   await expect(
-    t.query(api.posts.schedule, { secret, from: today, days: 0, day: today }),
+    t.query(api.posts.schedule, { from: today, days: 0, day: today }),
   ).rejects.toThrow("Days must be");
 });

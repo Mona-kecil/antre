@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antre | Lime and Glaze prototype</title>
+<!--
+Lime and Glaze tokens and button treatments adapted from design.how, commit
+840a386938a616bff48342dc94a966ebe7d91a97. System fonts substitute for the
+source fonts.
+
+MIT License
+Copyright (c) 2026 Arlan Marat
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+body{font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f3f3f1;color:#141413;padding:16px;-webkit-font-smoothing:antialiased}
+body[data-appearance=dark]{background:#090908;color:#ececE8}
+h1,h2,h3,p,ol,ul{margin:0}
+ol,ul{padding:0;list-style:none}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
+button:disabled{cursor:not-allowed;opacity:.45}
+
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:end;margin:0 auto 14px;max-width:1280px}
+.controls .title{flex-basis:100%;font-size:13px}
+.controls fieldset{border:0;padding:0;margin:0;min-width:0}
+.controls legend{font-size:11px;opacity:.7;margin-bottom:4px;padding:0}
+.seg{display:flex;flex-wrap:wrap;gap:2px;padding:3px;border-radius:999px;background:rgb(128 128 128/.15)}
+.seg button{padding:5px 12px;border-radius:999px;font-size:13px}
+.seg button[aria-pressed=true]{background:#fff;color:#111;box-shadow:0 0 0 1px rgb(0 0 0/.08)}
+body[data-appearance=dark] .seg button[aria-pressed=true]{background:#2b2b28;color:#fff}
+.reset{padding:6px 12px;border-radius:999px;border:1px solid rgb(128 128 128/.35);font-size:13px}
+
+.ap{
+  --ink:#0f0f0d;--paper:#fff;--field:#efeeea;--canvas:#f6f5f2;--muted:#6b6a63;--line:#e6e4df;
+  --hover:#efeeea;--selected:#e6e4df;--primary:#e4f222;--on-primary:#0f0f0d;--focus:#7c8700;
+  --error:#b42323;--warn:#a85d00;--ok:#2f7d32;--r:999px;--panel-r:16px;--field-r:12px;
+  --heading:600 26px/1.2 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--ink);color-scheme:light
+}
+.ap[data-appearance=dark]{
+  --ink:#f4f3ee;--paper:#0e0e0c;--canvas:#1a1a17;--field:#262622;--muted:#9a9890;--line:#2e2e29;
+  --hover:#262622;--selected:#3f3f39;--primary:#cad649;--on-primary:#0f0f0d;--focus:#cad649;
+  --error:#ff8a8a;--warn:#f0b35a;--ok:#7fd287
+}
+.ap[data-appearance=dark]{color-scheme:dark}
+.ap :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.ap ::selection{background:var(--selected);color:var(--ink)}
+.ap *{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.i{display:block;flex:none}
+.num,time{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+
+.frame{margin:0 auto;max-width:1280px}
+.ap[data-layout=phone] .frame{max-width:390px}
+.ap[data-layout=desktop] .frame{width:1280px;max-width:none;zoom:var(--scale,1)}
+.ws{position:relative;display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:844px;background:var(--paper);border:1px solid var(--line);border-radius:var(--panel-r);overflow:hidden}
+.ap[data-mode=desk] .ws{grid-template-columns:248px minmax(0,1fr) 320px;grid-template-rows:minmax(0,1fr);height:860px;background:var(--canvas)}
+.side,.panel{display:none}
+.ap[data-mode=desk] :is(.side,.panel){display:block;overflow:auto;min-height:0}
+.ap[data-mode=desk] :is(.topbar,.tabbar){display:none}
+.main{overflow:auto;min-height:0;padding:12px 16px 24px;background:var(--paper)}
+.ap[data-mode=desk] .main{padding:24px 32px 40px}
+.side{padding:18px 14px;border-right:1px solid var(--line)}
+.panel{padding:22px 18px;border-left:1px solid var(--line)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 14px;border-radius:var(--r);border:1px solid var(--line);background:var(--paper);font-size:13px;font-weight:500;white-space:nowrap}
+.btn:hover:not(:disabled){background:var(--hover)}
+.btn.primary{background:var(--primary);color:var(--on-primary);border-color:transparent;font-weight:600}
+.btn.primary:hover:not(:disabled){background:var(--primary);filter:brightness(.95)}
+.btn.quiet{border-color:transparent;background:transparent}
+.btn.quiet:hover{background:var(--hover)}
+.ib{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:var(--r);color:var(--muted)}
+.ib:hover:not(:disabled){background:var(--hover);color:var(--ink)}
+
+.brand{display:flex;align-items:center;gap:8px;font-size:20px;font-weight:650;letter-spacing:-.03em;padding:2px 8px 16px}
+.mark{display:flex;gap:2.5px;align-items:end;height:18px}
+.mark i{width:4px;border-radius:2px;background:currentColor;height:10px}
+.mark i:nth-child(2){height:17px}.mark i:nth-child(3){height:13px}
+.chsw{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:3px;background:var(--field);border-radius:var(--r);margin-bottom:12px}
+.chsw button{display:flex;align-items:center;justify-content:center;gap:6px;padding:5px 10px;border-radius:var(--r);font-size:13px;font-weight:500;color:var(--muted)}
+.chsw button[aria-pressed=true]{background:var(--paper);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.conn{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.nav{display:grid;gap:2px}
+.nav button{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r);font-weight:500;color:var(--muted)}
+.nav button:hover{background:var(--hover);color:var(--ink)}
+.nav button[aria-current]{background:var(--selected);color:var(--ink)}
+.nav .n{margin-left:auto;font-size:12px}
+.nav .n.alert{color:var(--error);font-weight:600}
+.newpost{width:100%;margin:14px 0 4px}
+.sched{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.sched-head{display:flex;align-items:center;gap:2px;font-size:12px;color:var(--muted);margin-bottom:6px;padding-left:4px}
+.sched-head span{margin-right:auto}
+.sched-head .ib{width:26px;height:26px}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
+.day{display:grid;justify-items:center;gap:0;padding:5px 0 6px;border-radius:10px}
+.day .dow{font-size:10.5px;color:var(--muted)}
+.day .dn{font-size:13px;font-weight:600}
+.day .dc{font-size:10.5px;color:var(--muted)}
+.day.past .dn{color:var(--muted);font-weight:500}
+.day.today .dow{color:var(--ink);font-weight:700}
+.day:hover:not(.on){background:var(--hover)}
+.day.on{background:var(--ink);color:var(--paper)}
+.day.on :is(.dow,.dc,.dn){color:inherit}
+.ap .day.on{background:var(--primary);color:var(--on-primary)}
+.weeknav{display:grid;grid-template-columns:32px repeat(7,minmax(0,1fr)) 32px;gap:4px;align-items:center;margin-bottom:8px}
+.weeknav .day{padding:7px 0 8px;border-radius:12px}
+.weeknav .day .dn{font-size:15px}
+.weeknav .day :is(.dow,.dc){font-size:11.5px}
+.dsum{font-size:12px;color:var(--muted);margin:8px 4px 0}
+.dsum b{color:var(--ink);font-weight:600}
+.dayline{display:block;width:100%;height:auto;overflow:visible}
+.dayline .track{fill:var(--field)}
+.dayline .free{fill:var(--muted);opacity:.55}
+.dayline .now{stroke:var(--error);stroke-width:1.5}
+.dayline .nowdot{fill:var(--error)}
+.dayline .next{fill:var(--paper);stroke:var(--ink);stroke-width:1.5}
+.dayline .nextl{font-size:11px;font-weight:650;fill:var(--ink)}
+.dayline .hl{font-size:10.5px;fill:var(--muted)}
+.dayline .mk{cursor:pointer}
+.dayline .mk:hover rect{filter:brightness(1.1)}
+.dayline .sel{stroke:var(--ink);stroke-width:2}
+.wg{display:grid;grid-template-columns:20px repeat(7,minmax(0,1fr));gap:3px;margin-top:2px}
+.wga,.wgc{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-content:start;min-width:0}
+.wgc{padding:0 2px 4px;border-radius:8px;cursor:pointer}
+.wgc:hover:not(.on){background:var(--hover)}
+.wgc.on{background:var(--selected)}
+.wgh{display:grid;justify-items:center;padding:4px 0 2px;min-height:36px;width:100%}
+.wgh .dow{font-size:10.5px;color:var(--muted)}
+.wgh .dn{font-size:13px;font-weight:600}
+.wgc.past .dn{color:var(--muted);font-weight:500}
+.wgc.today .dow{color:var(--ink);font-weight:700}
+.ap .wgc.on{background:color-mix(in oklab,var(--primary) 22%,transparent)}
+.wgw{display:grid;gap:2px}
+.wgw i{position:relative;height:7px;border-radius:2px;background:var(--field)}
+.wga .wgw i{background:none;font-size:10px;line-height:7px;font-style:normal;color:var(--muted);text-align:right;padding-right:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wgw i.q{background:var(--c)}
+.wgw i.pub{background:var(--muted);opacity:.55}
+.wgw i.f{background:var(--error)}
+.wgw i.h{background:var(--warn)}
+.wgw i.gone{opacity:.4}
+.wgw i.fr:hover{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.wgw i.nx{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink)}
+.wgw i.sel{box-shadow:0 0 0 2px var(--ink)}
+.wgw i[data-action]{cursor:pointer}
+.wgw i.nowafter::after{content:"";position:absolute;left:-3px;right:-3px;bottom:-2.5px;height:1.5px;background:var(--error);border-radius:1px}
+.tip{position:fixed;z-index:50;max-width:240px;padding:5px 9px;border-radius:8px;background:#0f0f0d;color:#f4f3ee;font:500 12px/1.35 ui-sans-serif,system-ui,sans-serif;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 14px rgb(0 0 0/.25)}
+.tip[hidden]{display:none}
+.acct{margin-top:18px;padding:14px 4px 0;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;font-size:12.5px;line-height:1.35}
+.acct strong{font-weight:600;display:block}
+
+.mhead{display:flex;align-items:center;gap:10px;margin-bottom:14px;min-height:36px}
+.mhead h1{font:var(--heading);letter-spacing:-.025em;margin-right:auto}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs button{padding:6px 0 10px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-pressed=true]{color:var(--ink);border-color:var(--ink)}
+.tabs .c{font-weight:500;margin-left:6px}
+.tabs .c.alert{color:var(--error)}
+.filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.search{flex:1 1 200px;display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;border-radius:var(--field-r);background:var(--field);color:var(--muted)}
+.search input{flex:1;border:0;background:none;outline:0;color:var(--ink);min-width:0}
+.search input::placeholder{color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:var(--r);border:1px solid var(--line);font-size:12.5px;color:var(--muted);white-space:nowrap}
+.chip:hover{color:var(--ink)}
+.chip[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--c);display:inline-block;flex:none}
+.dot.empty{background:none;box-shadow:inset 0 0 0 1.5px var(--muted)}
+.nextline{font-size:12.5px;color:var(--muted);padding:6px 0 4px}
+.nextline b{color:var(--ink);font-weight:600}
+.sorts{display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap}
+
+.list{display:grid}
+.post{display:grid;grid-template-columns:36px minmax(0,1fr);gap:12px;padding:16px 12px;margin:0 -12px;border-radius:var(--panel-r);position:relative;cursor:default}
+.list>.post+.post::before{content:"";position:absolute;left:12px;right:12px;top:0;border-top:1px solid var(--line)}
+.post.is-sel{background:var(--canvas)}
+.post.is-sel::before,.post.is-sel+.post::before{display:none}
+.rail{display:flex;flex-direction:column;align-items:center}
+.rail-line{flex:1;width:2px;background:var(--line);margin:6px 0 44px;border-radius:1px;min-height:12px}
+.av{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--ink);color:var(--paper);font-weight:700;font-size:15px;flex:none}
+.ap .av{background:var(--primary);color:var(--on-primary)}
+.av.li{border-radius:30%}
+.av.other{background:var(--field)!important;color:var(--ink)!important;box-shadow:none!important}
+.av.sm{width:28px;height:28px;font-size:12px}
+.av.xs{width:20px;height:20px;font-size:9px}
+.av.lg{width:48px;height:48px;font-size:19px}
+.pbody{min-width:0}
+.phead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.phead strong{font-weight:650}
+.ttag{color:var(--muted)}
+.ptime{margin-left:auto;font-size:12.5px;color:var(--muted)}
+.ptime.big{color:var(--ink);font-weight:650;font-size:14px}
+.flag{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;padding:1px 8px 1px 6px;border-radius:999px;background:var(--field);color:var(--muted)}
+.flag.green{color:var(--ok);background:color-mix(in oklab,var(--ok) 13%,transparent)}
+.flag.amber{color:var(--warn);background:color-mix(in oklab,var(--warn) 14%,transparent)}
+.flag.red{color:var(--error);background:color-mix(in oklab,var(--error) 12%,transparent)}
+.flag.indigo{color:oklch(55% .17 275);background:oklch(55% .17 275/.12)}
+.ap[data-appearance=dark] .flag.indigo{color:oklch(78% .12 275)}
+.labels{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;font-size:12px;color:var(--muted);margin-top:1px}
+.labels span{display:inline-flex;align-items:center;gap:5px}
+.problem{font-size:12.5px;color:var(--error);margin-top:6px;display:flex;gap:6px;align-items:center}
+.problem.warn{color:var(--warn)}
+.parts{margin-top:6px;display:grid;gap:12px}
+.text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.5}
+.pn{font-size:12px;color:var(--muted);display:flex;gap:8px;margin-bottom:2px}
+.over{color:var(--error);font-weight:600}
+.metrics{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted);margin-top:10px}
+.metrics b{color:var(--ink);font-weight:650}
+.acts{display:flex;flex-wrap:wrap;gap:2px;margin:8px 0 0 -10px}
+.act{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:var(--r);font-size:13px;font-weight:500;color:var(--muted)}
+.act:hover:not(:disabled){background:var(--hover);color:var(--ink)}
+.empty{padding:40px 8px;text-align:center}
+.empty p+p{color:var(--muted);margin-top:4px;font-size:13px}
+.fold{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;margin:12px 0 4px;border-radius:12px;background:var(--canvas);font-size:13px}
+.fold .fi{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:color-mix(in oklab,var(--ok) 14%,transparent);color:var(--ok)}
+.fold .fa{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--muted)}
+.reply-group{padding:14px 0;border-top:1px solid var(--line)}
+.reply-group:first-of-type{border-top:0}
+.orig{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;min-width:0}
+.orig span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reply{display:grid;grid-template-columns:36px minmax(0,1fr);gap:12px;padding:8px 0}
+.rbox{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:10px;align-items:center;margin-top:8px}
+.rbox input{border:0;outline:0;background:none;min-width:0;padding:6px 0;border-bottom:1px solid var(--line)}
+.rbox input:focus{border-color:var(--ink)}
+.answered{display:grid;grid-template-columns:20px minmax(0,1fr);gap:10px;margin-top:8px;font-size:14px}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--paper)}
+.topbar h1{font:var(--heading);font-size:24px;margin-right:auto;letter-spacing:-.025em}
+.topbar .chsw{margin:0;width:176px}
+.tabbar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);background:var(--paper);padding:6px 6px 12px}
+.tabbar button{display:grid;justify-items:center;gap:2px;font-size:11px;color:var(--muted);padding:4px 0}
+.tabbar button[aria-current]{color:var(--ink);font-weight:650}
+.tabbar .write .i{width:44px;height:30px;padding:5px 12px;border-radius:var(--r);background:var(--field);color:var(--ink)}
+
+.chead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.chead>:first-child{justify-self:start}
+.chead>:last-child{justify-self:end}
+.ctitle{font-size:16px;font-weight:650}
+.cbody{padding:16px 0 4px}
+.cpart{display:grid;grid-template-columns:36px minmax(0,1fr);gap:12px}
+.crail{display:flex;flex-direction:column;align-items:center}
+.cline{flex:1;width:2px;background:var(--line);margin:6px 0;min-height:14px;border-radius:1px}
+.cmain{min-width:0;padding-bottom:12px}
+.cname{display:flex;align-items:center;gap:6px;font-size:15px;min-height:24px}
+.cname strong{font-weight:650}
+.tagin{border:0;background:none;outline:0;color:var(--muted);padding:0;font-size:15px;min-width:0;flex:1}
+.tagin::placeholder{color:var(--muted);opacity:.75}
+.tagin:not(:placeholder-shown){color:var(--ink)}
+.ctext{display:block;width:100%;border:0;outline:0!important;background:none;resize:none;padding:1px 0 0;margin:0;font-size:15px;line-height:1.5;overflow:hidden;min-height:24px;color:var(--ink)}
+.ctext::placeholder{color:var(--muted);opacity:.75}
+.ctext.li{font-size:17px;min-height:200px}
+.ctools{display:flex;align-items:center;gap:0;margin:4px 0 0 -7px;color:var(--muted)}
+.ctools .ib{width:30px;height:30px}
+.ring{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:650}
+.ring .rt{fill:none;stroke:var(--line);stroke-width:2.5}
+.ring .rp{fill:none;stroke:var(--muted);stroke-width:2.5;stroke-linecap:round}
+.ring.near .rp{stroke:var(--warn)}.ring.near b{color:var(--warn)}
+.ring.over .rp{stroke:var(--error)}.ring.over b{color:var(--error)}
+.cadd{display:grid;grid-template-columns:36px 1fr;gap:12px;align-items:center;color:var(--muted);opacity:.65;padding:0 0 10px;width:100%;font-size:15px}
+.cadd:hover{opacity:1}
+.cadd .av{justify-self:center}
+.cfoot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line)}
+.cfoot .sp{flex:1}
+.lsel{appearance:none;height:30px;padding:0 24px 0 11px;border-radius:var(--r);border:1px solid var(--line);background:var(--paper) no-repeat right 8px center/11px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");font-size:12.5px;color:var(--ink);cursor:pointer}
+.lsel.unset{color:var(--muted)}
+.li-head{display:flex;gap:12px;align-items:center;margin-bottom:14px}
+.li-name{font-weight:650;font-size:16px}
+.li-aud{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;padding:1px 10px;border:1px solid var(--line);border-radius:999px;margin-top:2px;color:var(--muted)}
+.when-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);padding:3px 4px 3px 10px;border-radius:999px;background:var(--field);margin:0 0 10px 48px}
+.when-chip .ib{width:22px;height:22px}
+
+.overlay{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:24px;background:rgb(0 0 0/.42)}
+.dialog{width:min(640px,100%);max-height:100%;overflow:auto;background:var(--paper);border-radius:calc(var(--panel-r) + 4px);padding:14px 20px 16px;box-shadow:0 24px 64px rgb(0 0 0/.28)}
+.overlay.sheet{place-items:end stretch;padding:0}
+.overlay.sheet .dialog{width:100%;max-height:94%;border-radius:20px 20px 0 0}
+.grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 10px}
+.confirm{width:min(320px,100%);text-align:center;padding:22px 20px 12px}
+.confirm p{font-weight:650;font-size:16px;margin-bottom:16px}
+.confirm .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.picker{width:min(520px,100%)}
+.pday{padding:12px 0;border-top:1px solid var(--line)}
+.pday:first-of-type{border-top:0}
+.pday h3{font-size:13px;font-weight:650;margin-bottom:8px;display:flex;gap:8px}
+.pday h3 span{font-weight:500;color:var(--muted)}
+.fillrow{display:flex;gap:10px;align-items:center;width:100%;padding:10px;border-radius:12px;font-size:14px;min-width:0}
+.fillrow:hover{background:var(--hover)}
+.fillrow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+
+.panel h2{font-size:15px;font-weight:650;display:flex;align-items:center;gap:8px}
+.panel h3{font-size:12px;font-weight:600;color:var(--muted);margin:20px 0 8px}
+.agenda{margin-top:12px;display:grid;gap:3px}
+.ag{display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;align-items:center;min-height:32px;font-size:13px}
+.ag>time{color:var(--muted);font-size:12px}
+.ag.gap{min-height:10px;border-bottom:1px dashed var(--line);margin-bottom:8px}
+.agp{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;background:var(--paper);box-shadow:0 0 0 1px var(--line);min-width:0;width:100%}
+.agp .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.agp.pub{opacity:.62}
+.agp.fail{box-shadow:0 0 0 1.5px var(--error)}
+.agp.held{box-shadow:0 0 0 1.5px var(--warn)}
+.agp.on{box-shadow:0 0 0 2px var(--ink)}
+.agfree{width:100%;padding:6px 10px;border-radius:10px;border:1px dashed var(--line);color:var(--muted);font-size:12.5px;text-align:left}
+.agfree:hover{border-color:var(--ink);color:var(--ink)}
+.ag .gone{color:var(--muted);opacity:.45;font-size:12px;padding-left:10px}
+.nowrow{display:grid;grid-template-columns:40px 1fr;gap:10px;align-items:center;font-size:11px;color:var(--error);font-weight:650;margin:2px 0}
+.nowrow i{height:1.5px;background:var(--error)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ap[data-mode=desk] .stats{grid-template-columns:repeat(4,1fr)}
+.lstats{display:grid;gap:12px;margin-bottom:16px}
+.stat{padding:10px 12px;border-radius:12px;background:var(--paper);box-shadow:0 0 0 1px var(--line)}
+.stat b{display:block;font-size:20px;font-weight:650;line-height:1.2}
+.stat span{font-size:12px;color:var(--muted)}
+.slotchips{display:flex;flex-wrap:wrap;gap:6px}
+.slot{height:30px;padding:0 10px;border-radius:var(--r);border:1px solid var(--line);font-size:12.5px;background:var(--paper)}
+.slot:hover{border-color:var(--ink)}
+.slot[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.bars li{display:grid;grid-template-columns:64px minmax(0,1fr) 44px;gap:8px;align-items:center;font-size:12.5px;padding:3px 0}
+.bars .b{height:8px;border-radius:4px;background:var(--c)}
+.bars .n{text-align:right;color:var(--muted)}
+
+.toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);z-index:40;display:flex;align-items:center;gap:10px;padding:8px 8px 8px 16px;border-radius:14px;background:var(--ink);color:var(--paper);font-size:13px;box-shadow:0 10px 30px rgb(0 0 0/.25);white-space:nowrap;max-width:calc(100% - 32px)}
+.toast span{overflow:hidden;text-overflow:ellipsis}
+.toast button{font-weight:650;padding:4px 10px;border-radius:8px}
+.toast button:hover{background:rgb(128 128 128/.25)}
+.ap[data-mode=phone] .toast{bottom:84px}
+</style>
+</head>
+<body>
+<section id="ap" class="ap" data-layout="auto" data-appearance="light" aria-label="Antre prototype">
+  <header class="controls">
+    <p class="title"><strong>Antre prototype.</strong> Sample data. Nothing publishes.</p>
+    <fieldset><legend>Layout</legend><div class="seg">
+      <button data-pref="layout" data-value="auto">Auto</button><button data-pref="layout" data-value="phone">Phone</button><button data-pref="layout" data-value="desktop">Desktop</button>
+    </div></fieldset>
+    <fieldset><legend>Appearance</legend><div class="seg">
+      <button data-pref="appearance" data-value="light">Light</button><button data-pref="appearance" data-value="dark">Dark</button>
+    </div></fieldset>
+    <button class="reset" data-reset>Reset sample</button>
+  </header>
+  <div class="frame"><div class="ws" id="ws"></div></div>
+</section>
+<script>
+(() => {
+'use strict';
+const root = document.getElementById('ap');
+const ws = document.getElementById('ws');
+const tip = Object.assign(document.createElement('div'), { className: 'tip', hidden: true });
+document.body.append(tip);
+const allowed = {
+  layout: ['auto','phone','desktop'], appearance: ['light','dark'], view: ['drafts','schedule','library','replies']
+};
+const pref = { layout: 'auto', appearance: 'light', view: 'drafts' };
+try {
+  const q = new URLSearchParams(location.search);
+  for (const k in allowed) if (allowed[k].includes(q.get(k))) pref[k] = q.get(k);
+} catch {}
+
+const TZ = 'Asia/Jakarta', OFF = 7 * 36e5, MIN = 6e4, DAY = 864e5;
+const J = (m, d, h = 0, mi = 0) => Date.UTC(2026, m - 1, d, h, mi) - OFF;
+const NOW = J(10, 27, 10, 12), TODAY = J(10, 27);
+const dayOf = t => Math.floor((t + OFF) / DAY) * DAY - OFF;
+const weekStart = t => { const d = dayOf(t); return d - ((new Date(d + OFF).getUTCDay() + 6) % 7) * DAY; };
+const F = o => new Intl.DateTimeFormat('en-GB', { timeZone: TZ, ...o });
+const fClock = F({ hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const fDay = F({ weekday: 'short', day: 'numeric', month: 'short' });
+const fDow = F({ weekday: 'short' }), fNum = F({ day: 'numeric' }), fMon = F({ month: 'short' });
+const clock = t => fClock.format(t);
+const dayName = t => dayOf(t) === TODAY ? 'Today' : dayOf(t) === TODAY + DAY ? 'Tomorrow' : dayOf(t) === TODAY - DAY ? 'Yesterday' : fDay.format(t);
+const when = t => `${dayName(t)}, ${clock(t)}`;
+const shortWhen = t => dayOf(t) === TODAY ? clock(t) : `${fDow.format(t)} ${clock(t)}`;
+const ago = t => { const m = Math.round((NOW - t) / MIN); if (m < 60) return `${m}m`; const h = Math.round(m / 60); return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`; };
+const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const CH = {
+  threads: { name: 'Threads', user: 'mira.sample', limit: 500, windows: [[9, 0, 12, 0], [17, 0, 21, 0]], interval: 30 },
+  linkedin: { name: 'LinkedIn', user: 'Mira Sample', headline: 'Product writer · Antre', limit: 3000, windows: [[8, 0, 9, 30], [12, 0, 13, 0]], interval: 30 }
+};
+const TOPICS = {
+  product: { name: 'Product', c: 'oklch(62% .16 255)' }, craft: { name: 'Craft', c: 'oklch(68% .16 50)' },
+  habits: { name: 'Habits', c: 'oklch(63% .14 155)' }, tools: { name: 'Tools', c: 'oklch(60% .17 310)' }
+};
+const ANGLES = { lesson: 'Lesson', story: 'Story', opinion: 'Opinion', howto: 'How-to' };
+const FORMATS = { single: 'Single', thread: 'Thread', list: 'List' };
+const SCHEDULED = ['queued', 'held', 'failed', 'published'];
+
+const I = {
+  drafts: 'M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20V3.5ZM14 3.5V8h4M10 12h5M10 15.5h5',
+  schedule: 'M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-10ZM4 10h16M8.5 3v4M15.5 3v4',
+  library: 'M4 20V9M10 20V4M16 20v-8M21 20H3', replies: 'M4 5.5h16v10H9l-5 4v-14Z', plus: 'M12 5v14M5 12h14',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2', queue: 'M4 6h12M4 11h12M4 16h7M18 13v7M14.5 16.5h7',
+  check: 'M5 12.5l4.5 4.5L19 7', edit: 'M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3ZM14.5 7.5l2 2',
+  left: 'M15 5l-7 7 7 7', right: 'M9 5l7 7-7 7', down: 'M6 9l6 6 6-6', close: 'M6 6l12 12M18 6 6 18',
+  image: 'M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11ZM4 16l4.5-4.5 4 4 2.5-2.5L20 18M15 9h.01',
+  pin: 'M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5ZM12 14v6', alert: 'M12 4l9 16H3L12 4ZM12 10v4M12 17h.01',
+  send: 'M4 12 20 4l-6 16-3-7-7-1Z', external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+  swap: 'M7 7h12l-3-3M17 17H5l3 3', undo: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9Z',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-4-4'
+};
+const icon = (n, s = 20) => `<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${I[n]}"/></svg>`;
+
+let uid = 1;
+const mk = o => ({ id: uid++, pinned: false, topic: null, angle: null, format: 'single', tag: '', metrics: null, at: null, error: '', reason: '', ...o });
+const M = (views, likes, replies, reposts, quotes) => ({ views, likes, replies, reposts, quotes });
+const longPart = 'Most writing tools treat a draft like a file. It sits in a folder until you remember it. I want drafts to behave more like a queue at a good café: each one has a place, you can see what comes next, and nothing gets lost because someone forgot to look. That means three things. A draft should show when it could go out. It should show what it is about, so the week does not fill with one topic. And it should tell you when it is too long for the channel before you try to post it, not after. Small rules, big calm.';
+function seed() {
+  uid = 1;
+  const T = 'threads', L = 'linkedin';
+  const posts = [
+    mk({ channel: T, state: 'draft', topic: 'product', angle: 'lesson', format: 'thread', tag: 'Product design', parts: [
+      'Small releases make room for better questions.\n\nInstead of asking “Is the whole thing ready?”, ask “What can someone use today?”',
+      'For our next release, we kept the core flow and cut three half-finished extras.\n\nThe review got shorter. The feedback got more specific.',
+      'A smaller scope is not a smaller ambition. It is a way to put the work in someone’s hands while there is still time to change it.'] }),
+    mk({ channel: T, state: 'draft', topic: 'craft', angle: 'howto', format: 'thread', tag: 'Writing', parts: [
+      'Keep a place for the rough version.\n\nA sentence in a draft can become a post. A sentence you keep rewriting in your head has nowhere to go.',
+      'My rule this week: write the thought first, find the opening line later. The useful part is often hiding in the second paragraph.'] }),
+    mk({ channel: T, state: 'draft', topic: 'tools', angle: 'opinion', tag: 'Writing tools', parts: [longPart] }),
+    mk({ channel: T, state: 'draft', angle: 'story', parts: ['I rewrote the onboarding email four times this morning. The fifth version was the first one, with one sentence removed.'] }),
+    mk({ channel: T, state: 'draft', topic: 'habits', angle: 'lesson', tag: 'Routines', parts: ['Ship the notes, not the notebook. Nobody needs your whole process. They need the one page that changed your mind.'] }),
+
+    mk({ channel: T, state: 'published', at: J(10, 22, 18), topic: 'product', angle: 'opinion', tag: 'Product design', metrics: M(5120, 210, 31, 18, 6), parts: ['Every setting is a question you did not answer for the user. Some questions are worth handing over. Most are not.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 23, 9, 30), topic: 'craft', angle: 'howto', metrics: M(980, 22, 4, 1, 0), parts: ['Read your post out loud once. You will cut the sentence you were proudest of, and the post will be better for it.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 24, 17, 30), topic: 'habits', angle: 'story', tag: 'Routines', metrics: M(2260, 97, 12, 5, 1), parts: ['Saturday notebook review: twelve ideas, two worth posting, one worth a whole week. The ratio is the point.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 26, 9), topic: 'product', angle: 'lesson', tag: 'Product design', metrics: M(2410, 88, 14, 6, 2), parts: ['The best onboarding I have seen this year asks one question, then gets out of the way.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 26, 11), topic: 'craft', angle: 'opinion', metrics: M(1320, 41, 6, 2, 0), parts: ['Headlines are promises. Write the post first so you know which promise you can keep.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 26, 18), topic: 'habits', angle: 'howto', format: 'thread', tag: 'Routines', metrics: M(3890, 152, 23, 11, 4), parts: [
+      'The best part of a writing habit is having something to come back to.\n\nNot every draft needs to be finished in the same sitting.',
+      'Leave a note for tomorrow: what you were trying to say, and the example you still need. A small handoff to your future self.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 27, 9), topic: 'tools', angle: 'lesson', tag: 'Writing tools', metrics: M(1840, 64, 9, 4, 1), parts: ['A calendar shows when. A queue shows what is next. Planning posts needs both, on one screen.'] }),
+    mk({ channel: T, state: 'published', at: J(10, 27, 9, 30), topic: 'craft', angle: 'story', metrics: M(612, 18, 3, 1, 0), parts: ['Wrote 400 words, kept 41. Good morning.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 27, 10, 30), pinned: true, topic: 'product', angle: 'opinion', tag: 'Product design', parts: ['If the release note needs a diagram of your architecture, the release is not done yet.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 27, 11), topic: 'craft', angle: 'howto', parts: ['Cut the first sentence. Then check whether the post still makes sense. It usually does, and it usually starts faster.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 27, 17, 30), topic: 'habits', angle: 'lesson', tag: 'Routines', parts: ['Ten minutes of writing every day beats a free Saturday you keep for “real” writing.'] }),
+    mk({ channel: T, state: 'failed', at: J(10, 27, 18, 30), topic: 'tools', angle: 'howto', tag: 'Writing tools', error: 'Threads rejected the image. Files must be under 8 MB.', parts: ['My whole posting setup, in one screenshot. Drafts on the left, the week on the right, nothing else.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 28, 9), topic: 'product', angle: 'lesson', format: 'thread', tag: 'Product design', parts: [
+      'Before we add another setting, we walk through the task without it.',
+      'Sometimes the missing feature is a clearer label. Sometimes it is a better default. And sometimes the setting earns its place.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 28, 12), topic: 'habits', angle: 'story', parts: ['Lunch walk rule: no podcast. The best sentence of the day shows up around minute twelve.'] }),
+    mk({ channel: T, state: 'held', at: J(10, 28, 19), topic: 'craft', angle: 'opinion', reason: 'Held until the Threads image upload is fixed.', parts: ['A good example does more work than three paragraphs of explanation.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 29, 9, 30), topic: 'tools', angle: 'opinion', parts: ['The best feature of a plain text file is that it never asks you to upgrade.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 29, 17), topic: 'craft', angle: 'lesson', parts: ['Write for one person you know. The post gets clearer and, oddly, more people read it.'] }),
+    mk({ channel: T, state: 'queued', at: J(10, 30, 10), topic: 'product', angle: 'story', tag: 'Product design', parts: ['We deleted a dashboard last month. Nobody asked where it went. That told us more than its analytics ever did.'] }),
+
+    mk({ channel: L, state: 'draft', topic: 'product', angle: 'opinion', parts: ['A release note is a product decision.\n\nWriting one before a release forces us to name what changed, who it helps, and what they can do next.\n\nIf the explanation needs a diagram of our internal architecture, we probably have more work to do.\n\nThis week, we are starting with the sentence we want someone to read after they update. Then we are checking whether the product delivers on it.'] }),
+    mk({ channel: L, state: 'draft', topic: 'craft', angle: 'story', parts: ['Last quarter I kept a list of every post I almost published.\n\n37 drafts. 9 went out. The 9 were not the best written. They were the ones with a single, specific example.\n\nSpecific beats polished.'] }),
+    mk({ channel: L, state: 'queued', at: J(10, 28, 8, 30), topic: 'product', angle: 'lesson', parts: ['Before we add another setting, we walk through the task without it.\n\nSometimes the missing feature is a clearer label. Sometimes it is a better default. And sometimes the setting earns its place.\n\nThe walkthrough helps us tell the difference.'] }),
+    mk({ channel: L, state: 'queued', at: J(10, 29, 12, 30), topic: 'craft', angle: 'howto', parts: ['Three edits I make to every post before it goes out:\n\n1. Cut the first sentence.\n2. Replace one abstract word with an example.\n3. End on the thing the reader can do today.'] }),
+    mk({ channel: L, state: 'published', at: J(10, 26, 8), topic: 'habits', angle: 'lesson', parts: ['Our team writes the changelog before the code review. It keeps the review about the user, not the diff.'] }),
+    mk({ channel: L, state: 'published', at: J(10, 22, 12, 30), topic: 'product', angle: 'story', parts: ['We shipped a smaller feature than planned. Support tickets went down anyway. Scope is a design tool.'] })
+  ];
+  const habit = posts.find(p => p.at === J(10, 26, 18) && p.channel === T).id;
+  const tools = posts.find(p => p.at === J(10, 27, 9) && p.channel === T).id;
+  const replies = [
+    { id: 1, post: habit, from: 'jun.writes', at: J(10, 27, 8, 40), text: 'The “leave a note for tomorrow” trick saved my week.', answer: '' },
+    { id: 2, post: habit, from: 'ana.k', at: J(10, 27, 9, 55), text: 'Do you keep those notes in the draft itself or somewhere else?', answer: '' },
+    { id: 3, post: tools, from: 'tomas.builds', at: J(10, 27, 9, 20), text: 'Which tool do you use for the slot planning?', answer: '' }
+  ];
+  return { posts, replies, nextId: uid };
+}
+
+let { posts, replies, nextId } = seed();
+const fresh = () => ({ channel: 'threads', day: TODAY, selected: null, tab: 'drafts', topic: 'all', query: '', sort: 'date', fold: false, picker: null, confirm: null, toast: null });
+let state = fresh();
+let editor = null;
+let toastTimer = 0;
+
+const byId = id => posts.find(p => p.id === Number(id));
+const chPosts = () => posts.filter(p => p.channel === state.channel);
+const isDesk = () => pref.layout === 'desktop' || (pref.layout === 'auto' && root.clientWidth >= 1100);
+function slots(day, ch) {
+  const s = CH[ch], out = [];
+  for (const [h1, m1, h2, m2] of s.windows)
+    for (let t = day + (h1 * 60 + m1) * MIN; t <= day + (h2 * 60 + m2) * MIN; t += s.interval * MIN) out.push(t);
+  return out;
+}
+const windowsOf = (day, ch) => CH[ch].windows.map(([h1, m1, h2, m2]) => [day + (h1 * 60 + m1) * MIN, day + (h2 * 60 + m2) * MIN]);
+const takenSet = ch => new Set(posts.filter(p => p.channel === ch && SCHEDULED.includes(p.state)).map(p => p.at));
+const freeSlots = (day, ch) => { const tk = takenSet(ch); return slots(day, ch).filter(t => t > NOW && !tk.has(t)); };
+function nextFree(ch, n = 1) {
+  const out = [];
+  for (let d = TODAY; d < TODAY + 21 * DAY && out.length < n; d += DAY) out.push(...freeSlots(d, ch));
+  return n === 1 ? out[0] ?? null : out.slice(0, n);
+}
+const onDay = (day, ch) => posts.filter(p => p.channel === ch && SCHEDULED.includes(p.state) && dayOf(p.at) === day).sort((a, b) => a.at - b.at);
+function problems(p) {
+  const L = CH[p.channel].limit, out = [];
+  p.parts.forEach((t, i) => { if (t.length > L) out.push({ block: true, text: p.parts.length > 1 ? `Part ${i + 1} is ${t.length - L} characters over` : `${t.length - L} characters over the ${L} limit` }); });
+  if (!p.topic) out.push({ block: false, text: 'No topic' });
+  return out;
+}
+const blocked = p => problems(p).some(x => x.block) || !p.parts.some(t => t.trim());
+const engagement = m => m && m.views ? (m.likes + m.replies + m.reposts + m.quotes) / m.views : null;
+const firstLine = p => p.parts[0].split('\n')[0];
+const attention = () => chPosts().filter(p => p.state === 'failed' || p.state === 'held');
+
+const av = (ch, size = '', letter = 'M', other = false) => `<span class="av ${size}${ch === 'linkedin' ? ' li' : ''}${other ? ' other' : ''}" aria-hidden="true">${esc(letter)}</span>`;
+function labels(p) {
+  const t = p.topic ? TOPICS[p.topic] : null;
+  const rest = [p.angle && ANGLES[p.angle], p.format && FORMATS[p.format]].filter(Boolean);
+  return `<p class="labels">${t ? `<span><i class="dot" style="--c:${t.c}"></i>${t.name}</span>` : '<span><i class="dot empty"></i>No topic</span>'}${rest.map(r => `<span aria-hidden="true">·</span><span>${r}</span>`).join('')}</p>`;
+}
+const FLAGS = { held: ['alert', 'amber', 'Held'], failed: ['alert', 'red', 'Failed'], published: ['check', 'green', 'Published'] };
+function flags(p) {
+  let s = '';
+  if (p.state === 'queued' && p.pinned) s += `<span class="flag indigo">${icon('pin', 12)}Pinned</span>`;
+  if (FLAGS[p.state]) { const [ic, tone, text] = FLAGS[p.state]; s += `<span class="flag ${tone}">${icon(ic, 12)}${text}</span>`; }
+  return s;
+}
+function metricsRow(p) {
+  if (p.state !== 'published') return '';
+  const m = p.metrics;
+  if (!m) return '<p class="metrics"><span>No metrics yet</span></p>';
+  const e = engagement(m);
+  return `<p class="metrics"><span><b>${compact.format(m.views)}</b> views</span><span><b>${compact.format(m.likes)}</b> likes</span><span><b>${compact.format(m.replies)}</b> replies</span><span><b>${compact.format(m.reposts + m.quotes)}</b> reposts</span>${e !== null ? `<span><b>${(e * 100).toFixed(1)}%</b> eng.</span>` : ''}</p>`;
+}
+function partsHtml(p) {
+  const L = CH[p.channel].limit;
+  return p.parts.map((t, i) => `<div>${p.parts.length > 1 || t.length > L ? `<p class="pn">${p.parts.length > 1 ? `<span>${i + 1}/${p.parts.length}</span>` : ''}<span class="${t.length > L ? 'over' : ''}">${t.length}/${L}</span></p>` : ''}<div class="text">${esc(t)}</div></div>`).join('');
+}
+function actions(p) {
+  const A = (action, ic, text, extra = '') => `<button class="act" data-action="${action}" data-id="${p.id}"${extra}>${icon(ic, 17)}${text}</button>`;
+  switch (p.state) {
+    case 'draft': return A('queue', 'queue', 'Queue', blocked(p) ? ' disabled' : '') + A('pick', 'clock', 'Choose time', blocked(p) ? ' disabled' : '') + A('edit', 'edit', 'Edit');
+    case 'queued': return A('pick', 'clock', 'Move') + (queuedOf(p.channel).length > 1 ? A('swap', 'swap', 'Swap') : '') + A('unqueue', 'undo', 'Unqueue') + A('pin', 'pin', p.pinned ? 'Unpin' : 'Pin') + A('edit', 'edit', 'Edit');
+    case 'held': return A('retry', 'send', 'Resume') + A('edit', 'edit', 'Edit') + A('unqueue', 'undo', 'Unqueue');
+    case 'failed': return A('retry', 'undo', 'Retry') + A('edit', 'edit', 'Edit') + A('unqueue', 'undo', 'Unqueue');
+    case 'published': return A('ext', 'external', `View on ${CH[p.channel].name}`);
+  }
+  return '';
+}
+const queuedOf = ch => posts.filter(p => p.channel === ch && p.state === 'queued').sort((a, b) => a.at - b.at);
+function card(p, where) {
+  const c = CH[p.channel];
+  const time = p.state === 'draft' ? '<span class="ptime">Draft</span>'
+    : where === 'schedule' ? `<time class="ptime big">${clock(p.at)}</time>`
+    : p.state === 'published' ? `<time class="ptime">${ago(p.at)}</time>` : `<time class="ptime">${when(p.at)}</time>`;
+  const probs = p.state === 'draft' ? problems(p) : [];
+  return `<article class="post${state.selected === p.id ? ' is-sel' : ''}" id="post-${p.id}" data-action="select" data-id="${p.id}">
+    <div class="rail">${av(p.channel)}${p.parts.length > 1 ? '<i class="rail-line"></i>' : ''}</div>
+    <div class="pbody">
+      <header class="phead"><strong>${esc(c.user)}</strong>${p.tag && p.channel === 'threads' ? `<span class="ttag">› ${esc(p.tag)}</span>` : ''}${flags(p)}${time}</header>
+      ${labels(p)}
+      ${probs.map(x => `<p class="problem${x.block ? '' : ' warn'}">${icon('alert', 14)}${x.text}</p>`).join('')}
+      ${p.state === 'failed' ? `<p class="problem">${icon('alert', 14)}${esc(p.error)}</p>` : ''}
+      ${p.state === 'held' ? `<p class="problem warn">${icon('alert', 14)}${esc(p.reason)}</p>` : ''}
+      <div class="parts">${partsHtml(p)}</div>
+      ${metricsRow(p)}
+      <div class="acts">${actions(p)}</div>
+    </div></article>`;
+}
+
+function dayline(day, ch, W, compactLine) {
+  const H = compactLine ? 58 : 86, Y = compactLine ? 24 : 38, PAD = 14;
+  const tracks = windowsOf(day, ch), list = onDay(day, ch);
+  const times = [...tracks.flat(), ...list.map(p => p.at)];
+  const pad = 20 * MIN, from = Math.min(...times) - pad, to = Math.max(...times) + pad;
+  const x = t => PAD + (t - from) / (to - from) * (W - 2 * PAD);
+  const pitch = x(from + CH[ch].interval * MIN) - x(from);
+  const bw = Math.max(4, Math.min(10, pitch * .6));
+  const tk = new Set(list.map(p => p.at));
+  const free = slots(day, ch).filter(t => t > NOW && !tk.has(t));
+  const nf = nextFree(ch);
+  let s = `<svg class="dayline" viewBox="0 0 ${W} ${H}" role="group" aria-label="${esc(dayName(day))}: ${list.length} posts, ${free.length} free slots">`;
+  for (const [a, b] of tracks) {
+    s += `<rect class="track" x="${x(a) - 5}" y="${Y - 3}" width="${x(b) - x(a) + 10}" height="6" rx="3"/>`;
+    s += `<text class="hl" x="${x(a)}" y="${H - 4}" text-anchor="middle">${clock(a)}</text><text class="hl" x="${x(b)}" y="${H - 4}" text-anchor="middle">${clock(b)}</text>`;
+  }
+  if (pitch >= 5) for (const t of free) s += `<circle class="free" cx="${x(t)}" cy="${Y}" r="1.8"/>`;
+  if (NOW > from && NOW < to) s += `<line class="now" x1="${x(NOW)}" x2="${x(NOW)}" y1="${Y - 16}" y2="${Y + 8}"/><circle class="nowdot" cx="${x(NOW)}" cy="${Y - 16}" r="2.5"/>`;
+  if (nf && nf > from && nf < to) {
+    s += `<circle class="next" cx="${x(nf)}" cy="${Y}" r="5"/>`;
+    if (!compactLine) s += `<text class="nextl" x="${x(nf)}" y="${Y + 22}" text-anchor="middle">Next</text>`;
+  }
+  for (const p of list) {
+    const on = p.id === state.selected, h = on ? (compactLine ? 22 : 28) : (compactLine ? 12 : 16);
+    const fill = p.state === 'failed' ? 'var(--error)' : p.state === 'held' ? 'var(--warn)' : p.state === 'published' ? 'var(--muted)' : (TOPICS[p.topic]?.c ?? 'var(--ink)');
+    s += `<g class="mk" data-action="mark" data-id="${p.id}"><title>${clock(p.at)} · ${esc(firstLine(p))}</title><rect x="${x(p.at) - bw / 2}" y="${Y - h / 2}" width="${bw}" height="${h}" rx="${bw / 2}" fill="${fill}"${p.state === 'published' ? ' opacity=".55"' : ''}${on ? ' class="sel"' : ''}/></g>`;
+  }
+  return s + '</svg>';
+}
+function daySummary(day, ch) {
+  const list = onDay(day, ch), free = freeSlots(day, ch), nf = nextFree(ch);
+  return `<b>${list.length}</b> ${list.length === 1 ? 'post' : 'posts'} · <b>${free.length}</b> free${nf ? ` · next free <b>${shortWhen(nf)}</b>` : ''}`;
+}
+function weekDays() { const w0 = weekStart(state.day); return Array.from({ length: 7 }, (_, i) => w0 + i * DAY); }
+function dayButton(d) {
+  const n = onDay(d, state.channel).length;
+  return `<button class="day${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}${d < TODAY ? ' past' : ''}" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${n} posts"${d === state.day ? ' aria-current="date"' : ''}><span class="dow">${fDow.format(d).slice(0, 2)}</span><span class="dn">${fNum.format(d)}</span><span class="dc">${n || '–'}</span></button>`;
+}
+
+function weekGrid(ch) {
+  const nf = nextFree(ch), iv = CH[ch].interval * MIN;
+  const groups = d => CH[ch].windows.map(([h1, m1, h2, m2]) => { const out = []; for (let t = d + (h1 * 60 + m1) * MIN; t <= d + (h2 * 60 + m2) * MIN; t += iv) out.push(t); return out; });
+  const axis = groups(TODAY).map(g => `<span class="wgw">${g.map((t, i) => `<i>${i === 0 ? +clock(t).slice(0, 2) : ''}</i>`).join('')}</span>`).join('');
+  const col = d => {
+    const by = new Map(onDay(d, ch).map(p => [d + Math.round((p.at - d) / iv) * iv, p]));
+    const lastPast = d === TODAY ? slots(d, ch).filter(t => t <= NOW).at(-1) : null;
+    const cell = t => {
+      const p = by.get(t), now = t === lastPast ? ' nowafter' : '';
+      if (p) return `<i class="${slotKind(p)}${p.id === state.selected ? ' sel' : ''}${now}" style="--c:${TOPICS[p.topic]?.c ?? 'var(--ink)'}" data-action="mark" data-id="${p.id}" data-tip="${fDow.format(t)} ${clock(p.at)} · ${esc(firstLine(p))}"></i>`;
+      if (t > NOW) return `<i class="fr${t === nf ? ' nx' : ''}${now}" data-action="fill" data-t="${t}" data-tip="${fDow.format(t)} ${clock(t)} · Free"></i>`;
+      return `<i class="gone${now}"></i>`;
+    };
+    return `<div class="wgc${d === state.day ? ' on' : ''}${d === TODAY ? ' today' : ''}${d < TODAY ? ' past' : ''}" data-action="day" data-t="${d}">
+      <button class="wgh" data-action="day" data-t="${d}" aria-label="${fDay.format(d)}, ${onDay(d, ch).length} posts"${d === state.day ? ' aria-current="date"' : ''}><span class="dow">${fDow.format(d).slice(0, 2)}</span><span class="dn">${fNum.format(d)}</span></button>
+      ${groups(d).map(g => `<span class="wgw">${g.map(cell).join('')}</span>`).join('')}</div>`;
+  };
+  return `<div class="wg"><div class="wga" aria-hidden="true"><span class="wgh"></span>${axis}</div>${weekDays().map(col).join('')}</div>`;
+}
+function weekTotals(ch) {
+  const days = weekDays(), nf = nextFree(ch);
+  return `<b>${days.reduce((n, d) => n + onDay(d, ch).length, 0)}</b> posts · <b>${days.reduce((n, d) => n + freeSlots(d, ch).length, 0)}</b> free${nf ? ` · next <b>${shortWhen(nf)}</b>` : ''}`;
+}
+function side() {
+  const ch = state.channel, w = weekDays();
+  const replyCount = replies.filter(r => !r.answer).length;
+  const navItem = (v, label, n, alert) => `<button data-action="nav" data-view="${v}"${pref.view === v ? ' aria-current="page"' : ''}>${icon(v, 18)}${label}<span class="n num${alert ? ' alert' : ''}">${n}</span></button>`;
+  return `<aside class="side">
+    <div class="brand"><span class="mark"><i></i><i></i><i></i></span>antre</div>
+    ${channelSwitch()}
+    <nav class="nav" aria-label="Views">
+      ${navItem('drafts', 'Drafts', chPosts().filter(p => p.state === 'draft').length)}
+      ${navItem('schedule', 'Schedule', chPosts().filter(p => ['queued', 'held', 'failed'].includes(p.state)).length, attention().length > 0)}
+      ${navItem('library', 'Library', chPosts().filter(p => p.state === 'published').length)}
+      ${ch === 'threads' ? navItem('replies', 'Replies', replyCount) : ''}
+    </nav>
+    <button class="btn primary newpost" data-action="new">${icon('plus', 16)}New post</button>
+    <section class="sched" aria-label="Schedule overview">
+      <div class="sched-head"><span>${fNum.format(w[0])} ${fMon.format(w[0])} – ${fNum.format(w[6])} ${fMon.format(w[6])}</span>
+        <button class="ib" data-action="week" data-d="-7" aria-label="Previous week">${icon('left', 15)}</button><button class="ib" data-action="week" data-d="7" aria-label="Next week">${icon('right', 15)}</button></div>
+      ${weekGrid(ch)}<p class="dsum">${weekTotals(ch)}</p>
+    </section>
+    <div class="acct">${av(ch, 'sm')}<div><strong>${esc(CH[ch].user)}</strong><span class="muted">${TZ} · UTC+7</span></div><span class="conn" title="Connected" style="margin-left:auto"></span></div>
+  </aside>`;
+}
+const channelSwitch = () => `<div class="chsw" role="group" aria-label="Channel">${['threads', 'linkedin'].map(c => `<button data-action="channel" data-ch="${c}" aria-pressed="${state.channel === c}">${CH[c].name}</button>`).join('')}</div>`;
+const TITLES = { drafts: 'Drafts', schedule: 'Schedule', library: 'Library', replies: 'Replies' };
+const topbar = () => `<header class="topbar"><h1>${TITLES[pref.view]}</h1>${channelSwitch()}</header>`;
+function tabbar() {
+  const b = (v, ic, label) => `<button data-action="nav" data-view="${v}"${pref.view === v ? ' aria-current="page"' : ''}>${icon(ic, 20)}${label}</button>`;
+  return `<nav class="tabbar" aria-label="Views">${b('drafts', 'drafts', 'Drafts')}${b('schedule', 'schedule', 'Schedule')}<button class="write" data-action="new">${icon('plus', 20)}Write</button>${b('library', 'library', 'Library')}</nav>`;
+}
+function filterBar(placeholder) {
+  const chips = [['all', 'All'], ...Object.entries(TOPICS).map(([k, t]) => [k, t.name])];
+  return `<div class="filter"><label class="search">${icon('search', 16)}<input type="search" data-field="query" data-key="query" placeholder="${placeholder}" value="${esc(state.query)}" aria-label="${placeholder}"></label>
+    <div class="chips">${chips.map(([k, n]) => `<button class="chip" data-action="topic" data-k="${k}" aria-pressed="${state.topic === k}">${k !== 'all' ? `<i class="dot" style="--c:${TOPICS[k].c}"></i>` : ''}${n}</button>`).join('')}</div></div>`;
+}
+const matches = p => (state.topic === 'all' || p.topic === state.topic) && (!state.query || p.parts.join(' ').toLowerCase().includes(state.query.toLowerCase()));
+const mhead = (title, right = '') => isDesk() ? `<div class="mhead"><h1>${title}</h1>${right}</div>` : '';
+const emptyState = (a, b = '') => `<div class="empty"><p><strong>${a}</strong></p>${b ? `<p>${b}</p>` : ''}</div>`;
+
+function draftsMain() {
+  const drafts = chPosts().filter(p => p.state === 'draft'), att = attention();
+  const list = (state.tab === 'attention' ? att : drafts).filter(matches);
+  const nf = nextFree(state.channel);
+  return `${mhead('Drafts')}
+    <div class="tabs" role="group"><button data-action="tab" data-tab="drafts" aria-pressed="${state.tab === 'drafts'}">Drafts<span class="c num">${drafts.length}</span></button><button data-action="tab" data-tab="attention" aria-pressed="${state.tab === 'attention'}">Needs attention<span class="c num${att.length ? ' alert' : ''}">${att.length}</span></button></div>
+    ${filterBar(`Search ${CH[state.channel].name} drafts`)}
+    ${nf ? `<p class="nextline">Next free slot <b>${when(nf)}</b> · ${TZ}</p>` : ''}
+    <div class="list">${list.map(p => card(p)).join('') || emptyState(state.tab === 'attention' ? 'No posts need attention.' : 'Nothing matches.')}</div>`;
+}
+function scheduleMain() {
+  const ch = state.channel, list = onDay(state.day, ch);
+  const pub = list.filter(p => p.state === 'published'), rest = list.filter(p => p.state !== 'published');
+  const views = pub.reduce((n, p) => n + (p.metrics?.views ?? 0), 0);
+  const free = freeSlots(state.day, ch);
+  return `${mhead('Schedule', state.day !== TODAY ? '<button class="btn" data-action="today">Today</button>' : '')}
+    ${isDesk() ? '' : `<nav class="weeknav" aria-label="Days"><button class="ib" data-action="week" data-d="-7" aria-label="Previous week">${icon('left', 18)}</button>${weekDays().map(dayButton).join('')}<button class="ib" data-action="week" data-d="7" aria-label="Next week">${icon('right', 18)}</button></nav>
+    ${dayline(state.day, ch, 358, false)}
+    <p class="dsum" style="margin-bottom:6px">${dayName(state.day)} · ${daySummary(state.day, ch)} · ${TZ}</p>`}
+    ${pub.length ? `<button class="fold" data-action="fold" aria-expanded="${state.fold}"><span class="fi">${icon('check', 16)}</span><span><strong class="num">${pub.length} published</strong> <span class="muted num">${clock(pub[0].at)}${pub.length > 1 ? `–${clock(pub[pub.length - 1].at)}` : ''}${views ? ` · ${views.toLocaleString('en')} views` : ''}</span></span><span class="fa">${state.fold ? 'Hide' : 'Show'}${icon('down', 14)}</span></button>` : ''}
+    <div class="list">${[...(state.fold ? pub : []), ...rest].map(p => card(p, 'schedule')).join('') || emptyState(pub.length ? 'Nothing left on this day.' : 'Nothing on this day.', free.length ? `${free.length} free slots.` : 'No free slots.')}</div>`;
+}
+function libraryStats() {
+  const withM = chPosts().filter(p => p.state === 'published' && p.at > NOW - 7 * DAY && p.metrics);
+  if (!withM.length) return '';
+  const sum = k => compact.format(withM.reduce((n, p) => n + p.metrics[k], 0));
+  const avgE = withM.reduce((n, p) => n + engagement(p.metrics), 0) / withM.length;
+  const byTopic = Object.entries(TOPICS).map(([k, t]) => { const xs = withM.filter(p => p.topic === k); return [t, xs.length ? Math.round(xs.reduce((n, p) => n + p.metrics.views, 0) / xs.length) : 0, xs.length]; }).filter(x => x[2]);
+  const maxV = Math.max(1, ...byTopic.map(x => x[1]));
+  return `<section class="lstats" aria-label="Last 7 days">
+    <div class="stats">${[[sum('views'), 'views, 7 days'], [sum('likes'), 'likes'], [sum('replies'), 'replies'], [(avgE * 100).toFixed(1) + '%', 'avg. engagement']].map(([v, l]) => `<div class="stat"><b class="num">${v}</b><span>${l}</span></div>`).join('')}</div>
+    <ul class="bars" aria-label="Average views by topic">${byTopic.map(([t, v]) => `<li><span>${t.name}</span><i class="b" style="--c:${t.c};width:${v / maxV * 100}%"></i><span class="n num">${compact.format(v)}</span></li>`).join('')}</ul></section>`;
+}
+function libraryMain() {
+  const sorts = [['date', 'Newest'], ['views', 'Most viewed'], ['engagement', 'Best engagement']];
+  const key = { date: p => p.at, views: p => p.metrics?.views ?? -1, engagement: p => engagement(p.metrics) ?? -1 }[state.sort];
+  const list = chPosts().filter(p => p.state === 'published').filter(matches).sort((a, b) => key(b) - key(a));
+  return `${mhead('Library')}
+    ${filterBar(`Search published ${CH[state.channel].name} posts`)}
+    ${libraryStats()}
+    <div class="sorts" role="group" aria-label="Sort">${sorts.map(([k, n]) => `<button class="chip" data-action="sort" data-k="${k}" aria-pressed="${state.sort === k}">${n}</button>`).join('')}</div>
+    <div class="list">${list.map(p => card(p)).join('') || emptyState('Nothing matches.')}</div>`;
+}
+function repliesMain() {
+  if (state.channel !== 'threads') return `${mhead('Replies')}${emptyState('Replies are Threads only.')}`;
+  const groups = [...new Set(replies.map(r => r.post))].map(id => [byId(id), replies.filter(r => r.post === id)]);
+  return `${mhead('Replies')}${groups.map(([p, rs]) => `<section class="reply-group">
+    <button class="orig" data-action="select" data-id="${p.id}">${icon('replies', 14)}<span>${esc(firstLine(p))}</span></button>
+    ${rs.map(r => `<div class="reply">${av('threads', '', r.from[0].toUpperCase(), true)}<div class="pbody">
+      <header class="phead"><strong>${esc(r.from)}</strong><time class="ptime">${ago(r.at)}</time></header>
+      <div class="text">${esc(r.text)}</div>
+      ${r.answer ? `<div class="answered">${av('threads', 'xs')}<div class="text">${esc(r.answer)}</div></div>`
+        : `<form class="rbox" data-reply="${r.id}">${av('threads', 'xs')}<input data-key="reply-${r.id}" placeholder="Reply to ${esc(r.from)}…" aria-label="Reply to ${esc(r.from)}"><button class="btn quiet" data-action="reply" data-id="${r.id}">Post</button></form>`}
+    </div></div>`).join('')}</section>`).join('')}`;
+}
+
+function ring(len, limit, i) {
+  if (len < limit * .7) return `<span class="ring" data-ring="${i}"></span>`;
+  const r = 9, C = 2 * Math.PI * r, f = Math.min(1, len / limit), left = limit - len;
+  const tone = left < 0 ? 'over' : left <= Math.max(20, limit * .1) ? 'near' : '';
+  return `<span class="ring ${tone}" data-ring="${i}" title="${len}/${limit}"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="${r}" class="rt"/><circle cx="12" cy="12" r="${r}" class="rp" stroke-dasharray="${C * f} ${C}" transform="rotate(-90 12 12)"/></svg>${tone ? `<b class="num">${left}</b>` : ''}</span>`;
+}
+function threadsBody(e) {
+  const n = e.parts.length;
+  return `${e.parts.map((t, i) => `<div class="cpart">
+      <div class="crail">${av('threads', i ? 'sm' : '')}<i class="cline"></i></div>
+      <div class="cmain">
+        <div class="cname"><strong>mira.sample</strong>${i === 0 ? `<span class="muted">›</span><input class="tagin" data-field="tag" data-key="tag" placeholder="Add a topic" value="${esc(e.tag)}" aria-label="Topic tag">` : ''}${n > 1 ? `<button class="ib" style="margin-left:auto;width:26px;height:26px" data-action="remove-part" data-i="${i}" aria-label="Remove part ${i + 1}">${icon('close', 14)}</button>` : ''}</div>
+        <textarea class="ctext" rows="1" data-part="${i}" data-key="part-${i}" placeholder="${i ? 'Say more…' : 'What’s new?'}" aria-label="Part ${i + 1}">${esc(t)}</textarea>
+        <div class="ctools"><button class="ib" data-action="noop" aria-label="Add image">${icon('image', 18)}</button>${ring(t.length, 500, i)}</div>
+      </div></div>`).join('')}
+    <button class="cadd" data-action="add-part">${av('threads', 'xs')}<span>Add to thread</span></button>`;
+}
+function linkedinBody(e) {
+  return `<div class="li-head">${av('linkedin', 'lg')}<div><div class="li-name">Mira Sample</div><button class="li-aud" data-action="noop">${icon('globe', 13)}Post to Anyone${icon('down', 13)}</button></div></div>
+    <textarea class="ctext li" data-part="0" data-key="part-0" placeholder="What do you want to talk about?" aria-label="Post text">${esc(e.parts[0])}</textarea>
+    <div class="ctools"><button class="ib" data-action="noop" aria-label="Add image">${icon('image', 20)}</button><button class="ib" data-action="pick-editor" aria-label="Schedule">${icon('clock', 20)}</button>${ring(e.parts[0].length, 3000, 0)}</div>`;
+}
+function editorSelects(e) {
+  const sel = (field, map, none) => `<select class="lsel${e[field] ? '' : ' unset'}" data-field="${field}" aria-label="${none}"><option value="">${none}</option>${Object.entries(map).map(([k, v]) => `<option value="${k}"${e[field] === k ? ' selected' : ''}>${typeof v === 'string' ? v : v.name}</option>`).join('')}</select>`;
+  return sel('topic', TOPICS, 'Topic') + sel('angle', ANGLES, 'Angle') + (e.channel === 'threads' ? sel('format', FORMATS, 'Format') : '');
+}
+function composerParts() {
+  const e = editor, nf = nextFree(e.channel), t = e.at ?? nf;
+  const head = `<header class="chead"><button class="btn quiet" data-action="cancel">Cancel</button><h2 class="ctitle">${e.id ? 'Edit draft' : e.channel === 'threads' ? 'New thread' : 'New post'}</h2><span></span></header>`;
+  const whenChip = e.at ? `<div class="when-chip">${icon('clock', 14)}${when(e.at)}<button class="ib" data-action="clear-at" aria-label="Clear time">${icon('close', 12)}</button></div>` : '';
+  const body = `<div class="cbody">${e.channel === 'threads' ? threadsBody(e) : linkedinBody(e)}</div>${whenChip}`;
+  const foot = `<footer class="cfoot">${editorSelects(e)}<span class="sp"></span><button class="btn quiet" data-action="save">Save draft</button>${e.channel === 'threads' ? `<button class="ib" data-action="pick-editor" aria-label="Choose time">${icon('clock', 18)}</button>` : ''}<button class="btn primary" data-action="queue-editor"${blocked(e) ? ' disabled' : ''}>${e.at ? 'Schedule' : 'Queue'}${t ? ` · ${shortWhen(t)}` : ''}</button></footer>`;
+  return { head, body, foot };
+}
+function composerOverlay() {
+  const c = composerParts(), desk = isDesk();
+  return `<div class="overlay${desk ? '' : ' sheet'}" data-action="backdrop"><div class="dialog" role="dialog" aria-modal="true" aria-label="Composer">${desk ? '' : '<div class="grab"></div>'}${c.head}${c.body}${c.foot}</div></div>`;
+}
+function panelAgenda() {
+  const ch = state.channel, day = state.day, list = onDay(day, ch);
+  const times = [...new Set([...slots(day, ch), ...list.map(p => p.at)])].sort((a, b) => a - b);
+  const wins = windowsOf(day, ch);
+  let rows = '', nowDone = day !== TODAY, prevWin = -1;
+  for (const t of times) {
+    const w = wins.findIndex(([a, b]) => t >= a && t <= b);
+    if (prevWin !== -1 && w !== prevWin) rows += '<li class="ag gap" aria-hidden="true"></li>';
+    prevWin = w;
+    if (!nowDone && t > NOW) { rows += `<li class="nowrow"><span class="num">${clock(NOW)}</span><i></i></li>`; nowDone = true; }
+    const ps = list.filter(p => p.at === t);
+    const cell = ps.length ? ps.map(p => `<button class="agp${p.state === 'published' ? ' pub' : p.state === 'failed' ? ' fail' : p.state === 'held' ? ' held' : ''}${p.id === state.selected ? ' on' : ''}" data-action="mark" data-id="${p.id}"><i class="dot" style="--c:${TOPICS[p.topic]?.c ?? 'var(--muted)'}"></i><span class="t">${esc(firstLine(p))}</span>${p.state === 'published' ? icon('check', 14) : p.pinned ? icon('pin', 14) : p.state === 'failed' || p.state === 'held' ? icon('alert', 14) : ''}</button>`).join('')
+      : t > NOW ? `<button class="agfree" data-action="fill" data-t="${t}">Free</button>` : '<span class="gone">–</span>';
+    rows += `<li class="ag"><time>${clock(t)}</time><div>${cell}</div></li>`;
+  }
+  if (!nowDone) rows += `<li class="nowrow"><span class="num">${clock(NOW)}</span><i></i></li>`;
+  return `<h2>${dayName(day)}<span class="muted" style="font-weight:500;font-size:12.5px">${dayName(day) === fDay.format(day) ? '' : fDay.format(day)}</span></h2><p class="dsum" style="margin:4px 0 0">${daySummary(day, ch)}</p><ol class="agenda">${rows}</ol>`;
+}
+const slotKind = p => p.state === 'published' ? 'pub' : p.state === 'failed' ? 'f' : p.state === 'held' ? 'h' : 'q';
+function panel() {
+  return `<aside class="panel" aria-label="Day">${panelAgenda()}</aside>`;
+}
+function pickerOverlay() {
+  const pk = state.picker, desk = isDesk();
+  const ch = pk.mode === 'editor' ? editor.channel : pk.mode === 'fill' ? state.channel : byId(pk.id).channel;
+  let inner;
+  if (pk.mode === 'fill') {
+    const drafts = posts.filter(p => p.channel === ch && p.state === 'draft' && !blocked(p));
+    inner = drafts.map(p => `<button class="fillrow" data-action="fill-pick" data-id="${p.id}"><i class="dot${p.topic ? '' : ' empty'}" style="--c:${TOPICS[p.topic]?.c}"></i><span>${esc(firstLine(p))}</span></button>`).join('') || emptyState('No drafts ready.');
+  } else {
+    const days = [];
+    for (let d = TODAY; d < TODAY + 10 * DAY && days.length < 5; d += DAY) { const f = freeSlots(d, ch); if (f.length) days.push([d, f]); }
+    inner = days.map(([d, f]) => `<section class="pday"><h3>${dayName(d)}<span>${f.length} free</span></h3><div class="slotchips">${f.map(t => `<button class="slot num" data-action="pick-slot" data-t="${t}">${clock(t)}</button>`).join('')}</div></section>`).join('');
+  }
+  const title = pk.mode === 'fill' ? `Queue at ${when(pk.t)}` : pk.mode === 'move' ? 'Move to' : 'Choose time';
+  return `<div class="overlay${desk ? '' : ' sheet'}" data-action="close-picker" style="z-index:35"><div class="dialog picker" role="dialog" aria-modal="true" aria-label="${title}">${desk ? '' : '<div class="grab"></div>'}<header class="chead" style="margin-bottom:6px"><button class="btn quiet" data-action="close-picker">Cancel</button><h2 class="ctitle">${title}</h2><span></span></header>${inner}</div></div>`;
+}
+const confirmOverlay = () => `<div class="overlay" style="z-index:36"><div class="dialog confirm" role="alertdialog" aria-modal="true" aria-label="Save to drafts?"><p>Save to drafts?</p><div class="row"><button class="btn" data-action="discard">Don’t save</button><button class="btn primary" data-action="save">Save</button></div><button class="btn quiet" style="width:100%" data-action="keep">Keep editing</button></div></div>`;
+
+function mainView() {
+  return { drafts: draftsMain, schedule: scheduleMain, library: libraryMain, replies: repliesMain }[pref.view]();
+}
+function render() {
+  tip.hidden = true;
+  root.dataset.mode = isDesk() ? 'desk' : 'phone';
+  const scrolls = [...ws.querySelectorAll('.main,.side,.panel,.dialog')].map(el => [el.className, el.scrollTop]);
+  const active = document.activeElement?.dataset?.key, sel = active ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  let html = side() + topbar() + `<main class="main">${mainView()}</main>` + panel() + tabbar();
+  if (editor) html += composerOverlay();
+  if (state.picker) html += pickerOverlay();
+  if (state.confirm) html += confirmOverlay();
+  if (state.toast) html += `<div class="toast" role="status"><span>${esc(state.toast.text)}</span>${state.toast.undo ? '<button data-action="undo">Undo</button>' : ''}</div>`;
+  ws.innerHTML = html;
+  for (const [cls, top] of scrolls) { const el = ws.querySelector(`[class="${cls}"]`); if (el) el.scrollTop = top; }
+  ws.querySelectorAll('.ctext').forEach(grow);
+  if (active) { const el = ws.querySelector(`[data-key="${active}"]`); if (el) { el.focus(); try { el.setSelectionRange(...sel); } catch {} } }
+}
+function grow(t) { t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }
+function updateLive() {
+  if (!editor) return;
+  ws.querySelectorAll('[data-ring]').forEach(el => { const i = +el.dataset.ring; el.outerHTML = ring(editor.parts[i].length, CH[editor.channel].limit, i); });
+  const q = ws.querySelector('[data-action="queue-editor"]'); if (q) q.disabled = blocked(editor);
+}
+function applyPrefs() {
+  for (const k of ['layout', 'appearance']) root.dataset[k] = pref[k];
+  document.body.dataset.appearance = pref.appearance;
+  root.querySelectorAll('[data-pref]').forEach(b => b.setAttribute('aria-pressed', String(pref[b.dataset.pref] === b.dataset.value)));
+  root.style.setProperty('--scale', String(Math.min(1, (root.clientWidth || 1280) / 1280)));
+  try { const u = new URL(location.href); for (const [k, v] of Object.entries(pref)) u.searchParams.set(k, v); history.replaceState(null, '', u); } catch {}
+}
+function toast(text, undo) {
+  state.toast = { text, undo };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { state.toast = null; render(); }, 5000);
+}
+const snapshot = () => JSON.parse(JSON.stringify({ posts, replies }));
+function schedule(p, t, verb = 'Queued') {
+  const undo = snapshot();
+  Object.assign(p, { state: 'queued', at: t, error: '', reason: '' });
+  state.selected = p.id;
+  toast(`${verb} for ${when(t)}`, undo);
+}
+function openEditor(id) {
+  const p = id ? byId(id) : null;
+  editor = p ? { id: p.id, channel: p.channel, parts: [...p.parts], topic: p.topic, angle: p.angle, format: p.format, tag: p.tag, at: p.state === 'queued' ? p.at : null, dirty: false }
+    : { id: null, channel: state.channel, parts: [''], topic: null, angle: null, format: 'single', tag: '', at: null, dirty: false };
+  render();
+  ws.querySelector('[data-part="0"]')?.focus();
+}
+function saveEditor() {
+  const e = editor, parts = e.parts.filter((t, i) => i === 0 || t.trim());
+  if (!parts.some(t => t.trim())) { editor = null; return null; }
+  const fields = { parts, topic: e.topic, angle: e.angle, format: e.channel === 'threads' && parts.length > 1 ? 'thread' : e.format, tag: e.tag };
+  let p = e.id ? byId(e.id) : null;
+  if (p) Object.assign(p, fields); else { p = mk({ id: nextId++, channel: e.channel, state: 'draft', ...fields }); posts.push(p); }
+  editor = null;
+  return p;
+}
+function closeEditor(then) {
+  if (editor?.dirty) { state.confirm = { then }; render(); return; }
+  editor = null; then?.(); render();
+}
+
+ws.addEventListener('input', ev => {
+  const t = ev.target;
+  if (t.dataset.part !== undefined && editor) { editor.parts[+t.dataset.part] = t.value; editor.dirty = true; grow(t); updateLive(); }
+  else if (t.dataset.field === 'tag' && editor) { editor.tag = t.value; editor.dirty = true; updateLive(); }
+  else if (t.dataset.field === 'query') { state.query = t.value; render(); }
+});
+ws.addEventListener('change', ev => {
+  const t = ev.target;
+  if (editor && ['topic', 'angle', 'format'].includes(t.dataset.field)) { editor[t.dataset.field] = t.value || null; editor.dirty = true; t.classList.toggle('unset', !t.value); }
+});
+ws.addEventListener('submit', ev => ev.preventDefault());
+ws.addEventListener('pointerover', ev => {
+  const el = ev.target.closest('[data-tip]');
+  if (!el) { tip.hidden = true; return; }
+  tip.textContent = el.dataset.tip; tip.hidden = false;
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth;
+  tip.style.left = `${Math.min(innerWidth - w - 4, Math.max(4, r.left + r.width / 2 - w / 2))}px`;
+  tip.style.top = `${r.top - tip.offsetHeight - 6}px`;
+});
+ws.addEventListener('pointerleave', () => { tip.hidden = true; });
+ws.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') {
+    if (state.confirm) { state.confirm = null; render(); }
+    else if (state.picker) { state.picker = null; render(); }
+    else if (editor) closeEditor();
+  }
+  if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && editor && !blocked(editor)) ws.querySelector('[data-action="queue-editor"]')?.click();
+});
+ws.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-action]');
+  if (!el || !ws.contains(el)) return;
+  const a = el.dataset.action, d = el.dataset, p = d.id ? byId(d.id) : null;
+  if ((a === 'backdrop' || a === 'close-picker') && ev.target !== el && !el.matches('button')) return;
+  switch (a) {
+    case 'nav': return closeEditor(() => { pref.view = d.view; state.selected = null; state.query = ''; state.topic = 'all'; applyPrefs(); });
+    case 'channel': return closeEditor(() => { state.channel = d.ch; state.selected = null; if (d.ch !== 'threads' && pref.view === 'replies') pref.view = 'drafts'; });
+    case 'new': if (editor) return; return openEditor(null);
+    case 'edit': return openEditor(p.id);
+    case 'select': state.selected = p.id; break;
+    case 'mark': state.selected = p.id; state.day = dayOf(p.at); if (pref.view !== 'schedule' || !isDesk()) { pref.view = 'schedule'; applyPrefs(); } state.fold = state.fold || p.state === 'published'; render(); document.getElementById(`post-${p.id}`)?.scrollIntoView({ block: 'nearest' }); return;
+    case 'day': state.day = +d.t; state.selected = null; break;
+    case 'week': state.day += +d.d * DAY; state.selected = null; break;
+    case 'today': state.day = TODAY; break;
+    case 'tab': state.tab = d.tab; break;
+    case 'topic': state.topic = d.k; break;
+    case 'sort': state.sort = d.k; break;
+    case 'fold': state.fold = !state.fold; break;
+    case 'queue': { const t = nextFree(p.channel); if (t) schedule(p, t); break; }
+    case 'pick': state.picker = { mode: p.state === 'queued' ? 'move' : 'post', id: p.id }; break;
+    case 'pick-editor': state.picker = { mode: 'editor' }; break;
+    case 'pick-slot': {
+      const pk = state.picker, t = +d.t; state.picker = null;
+      if (pk.mode === 'editor') { editor.at = t; editor.dirty = true; } else schedule(byId(pk.id), t, pk.mode === 'move' ? 'Moved' : 'Queued');
+      break;
+    }
+    case 'clear-at': editor.at = null; break;
+    case 'fill': state.picker = { mode: 'fill', t: +d.t }; break;
+    case 'fill-pick': { const t = state.picker.t; state.picker = null; schedule(p, t); break; }
+    case 'close-picker': case 'backdrop': if (a === 'backdrop') return closeEditor(); state.picker = null; break;
+    case 'swap': {
+      const q = queuedOf(p.channel), i = q.indexOf(p), other = q[i + 1] ?? q[i - 1], undo = snapshot();
+      [p.at, other.at] = [other.at, p.at]; toast(`Swapped. Now ${when(p.at)}`, undo); break;
+    }
+    case 'unqueue': { const undo = snapshot(); Object.assign(p, { state: 'draft', at: null, pinned: false, error: '', reason: '' }); toast('Moved back to drafts', undo); break; }
+    case 'pin': p.pinned = !p.pinned; toast(p.pinned ? 'Pinned. Queue changes skip this post.' : 'Unpinned'); break;
+    case 'retry': { const t = p.at > NOW ? p.at : nextFree(p.channel); schedule(p, t, 'Requeued'); break; }
+    case 'ext': toast('Sample post. Nothing is online.'); break;
+    case 'add-part': editor.parts.push(''); editor.format = 'thread'; render(); ws.querySelector(`[data-part="${editor.parts.length - 1}"]`)?.focus(); return;
+    case 'remove-part': editor.parts.splice(+d.i, 1); editor.dirty = true; break;
+    case 'cancel': return closeEditor();
+    case 'keep': { state.confirm = null; render(); const ta = ws.querySelector('[data-part]'); ta?.focus(); ta?.setSelectionRange(ta.value.length, ta.value.length); return; }
+    case 'discard': { const then = state.confirm?.then; state.confirm = null; editor = null; then?.(); break; }
+    case 'save': {
+      const then = state.confirm?.then; state.confirm = null;
+      const saved = saveEditor(); if (saved) { state.selected = saved.id; toast('Saved to drafts'); }
+      then?.(); break;
+    }
+    case 'queue-editor': {
+      if (blocked(editor)) return;
+      const at = editor.at, saved = saveEditor(); if (!saved) break;
+      const t = at ?? nextFree(saved.channel);
+      if (t) schedule(saved, t, at ? 'Scheduled' : 'Queued');
+      break;
+    }
+    case 'reply': {
+      ev.preventDefault();
+      const r = replies.find(x => x.id === +d.id), input = el.closest('form').querySelector('input');
+      if (!input.value.trim()) return;
+      r.answer = input.value.trim(); toast(`Replied to ${r.from}`); break;
+    }
+    case 'undo': ({ posts, replies } = state.toast.undo); state.toast = null; render(); return;
+    case 'noop': return;
+  }
+  render();
+});
+root.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-pref]');
+  if (b) { pref[b.dataset.pref] = b.dataset.value; applyPrefs(); render(); return; }
+  if (ev.target.closest('[data-reset]')) { ({ posts, replies, nextId } = seed()); state = fresh(); editor = null; render(); }
+});
+let lastMode = null;
+new ResizeObserver(() => { applyPrefs(); const m = isDesk(); if (m !== lastMode) { lastMode = m; render(); } }).observe(root);
+applyPrefs();
+lastMode = isDesk();
+render();
+})();
+</script>
+</body>
+</html>

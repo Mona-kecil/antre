@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antre | Design prototype</title>
+<!--
+Theme tokens and button treatments adapted from design.how, commit
+840a386938a616bff48342dc94a966ebe7d91a97. Plain HTML stand-ins, not installed
+React components. System fonts substitute for the source fonts.
+
+MIT License
+Copyright (c) 2026 Arlan Marat
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<style>
+html, body { margin: 0; background: transparent; }
+/* All roles, fonts and UI rules stay inside this prototype. */
+#antre-prototype {
+  --prototype-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --prototype-ink: oklch(20% 0.024 262);
+  --prototype-paper: oklch(99.7% 0.001 250);
+  --prototype-field: oklch(95.6% 0.004 255);
+  --prototype-canvas: oklch(99.1% 0.002 250);
+  --prototype-muted: oklch(20% 0.024 262 / .66);
+  --prototype-line: oklch(20% 0.024 262 / .14);
+  --prototype-input-line: oklch(20% 0.024 262 / .50);
+  --prototype-hover: oklch(20% 0.024 262 / .05);
+  --prototype-selected: oklch(20% 0.024 262 / .09);
+  --prototype-primary: var(--prototype-ink);
+  --prototype-on-primary: var(--prototype-paper);
+  --prototype-focus: var(--prototype-ink);
+  --prototype-error: oklch(51% .180 26);
+  --prototype-radius: 6px;
+  --prototype-panel-radius: 10px;
+  --prototype-field-radius: 6px;
+  --prototype-heading: 400 24px/1.2 var(--prototype-font);
+  --prototype-body: 400 14px/1.5 var(--prototype-font);
+  --prototype-button-weight: 500;
+  --prototype-gloss-top: #6b6b6b;
+  --prototype-gloss-mid: #3d3d3d;
+  --prototype-gloss-bottom: #232323;
+  --prototype-gloss-rim: rgb(0 0 0 / .55);
+  --prototype-gloss-highlight: rgb(255 255 255 / .30);
+  --prototype-gloss-text: rgb(255 255 255 / .92);
+  --prototype-clear: transparent;
+  --prototype-outer-ink: oklch(20% 0.024 262);
+  font: var(--prototype-body); color: var(--prototype-ink); color-scheme: light;
+  width: 100%; -webkit-font-smoothing: antialiased; text-underline-offset: 3px;
+}
+#antre-prototype[data-theme="quartz"][data-appearance="dark"] {
+  --prototype-ink: oklch(96.5% .006 250);
+  --prototype-paper: oklch(18.5% .016 262);
+  --prototype-field: oklch(23.5% .018 262);
+  --prototype-canvas: oklch(15% .014 262);
+  --prototype-muted: oklch(96.5% .006 250 / .66);
+  --prototype-line: oklch(96.5% .006 250 / .14);
+  --prototype-input-line: oklch(96.5% .006 250 / .50);
+  --prototype-hover: oklch(96.5% .006 250 / .05);
+  --prototype-selected: oklch(96.5% .006 250 / .09);
+  --prototype-error: oklch(82% .055 26);
+}
+#antre-prototype[data-theme="lime"] {
+  --prototype-ink: #0f0f0d; --prototype-paper: #ffffff;
+  --prototype-field: #efeeea; --prototype-canvas: #f6f5f2;
+  --prototype-muted: #6b6a63; --prototype-line: #e6e4df;
+  --prototype-input-line: #85827a; --prototype-hover: #efeeea;
+  --prototype-selected: #e6e4df; --prototype-primary: #e4f222;
+  --prototype-on-primary: #0f0f0d; --prototype-focus: #7c8700;
+  --prototype-error: #b42323; --prototype-radius: 999px;
+  --prototype-panel-radius: 16px; --prototype-field-radius: 12px;
+  --prototype-heading: 600 28px/1.2 var(--prototype-font);
+  --prototype-button-weight: 500;
+}
+#antre-prototype[data-theme="lime"][data-appearance="dark"] {
+  --prototype-ink: #f4f3ee; --prototype-paper: #0e0e0c;
+  --prototype-canvas: #1a1a17; --prototype-field: #262622;
+  --prototype-muted: #9a9890; --prototype-line: #2e2e29;
+  --prototype-input-line: #8a8880; --prototype-hover: #262622;
+  --prototype-selected: #3f3f39; --prototype-primary: #cad649;
+  --prototype-focus: #cad649; --prototype-error: #ff8a8a;
+}
+#antre-prototype[data-theme="glaze"] {
+  --prototype-ink: rgb(5 5 5 / .80); --prototype-paper: #ffffff;
+  --prototype-field: #efefef; --prototype-canvas: #f1f1f0;
+  --prototype-muted: rgb(5 5 5 / .60); --prototype-line: rgb(5 5 5 / .10);
+  --prototype-input-line: rgb(5 5 5 / .45); --prototype-hover: rgb(5 5 5 / .06);
+  --prototype-selected: rgb(5 5 5 / .10); --prototype-focus: rgb(5 5 5 / .80);
+  --prototype-error: #b23c29; --prototype-radius: 999px;
+  --prototype-panel-radius: 14px; --prototype-field-radius: 10px;
+  --prototype-heading: 500 28px/1.2 var(--prototype-font);
+  --prototype-button-weight: 500;
+}
+#antre-prototype[data-theme="glaze"][data-appearance="dark"] {
+  --prototype-ink: #f4f4f3; --prototype-paper: #1f1f1f;
+  --prototype-field: #2a2a2a; --prototype-canvas: #161616;
+  --prototype-muted: rgb(244 244 243 / .60); --prototype-line: rgb(244 244 243 / .10);
+  --prototype-input-line: rgb(244 244 243 / .45); --prototype-hover: rgb(244 244 243 / .06);
+  --prototype-selected: rgb(244 244 243 / .10); --prototype-focus: #f4f4f3;
+  --prototype-error: #f2917f;
+  --prototype-gloss-top: #fbfbfa; --prototype-gloss-mid: #dcdcdb;
+  --prototype-gloss-bottom: #bdbdbc; --prototype-gloss-rim: rgb(255 255 255 / .22);
+  --prototype-gloss-highlight: rgb(255 255 255 / .90);
+  --prototype-gloss-text: rgb(5 5 5 / .88);
+}
+#antre-prototype[data-appearance="dark"] { color-scheme: dark; }
+#antre-prototype *, #antre-prototype *::before, #antre-prototype *::after { box-sizing: border-box; }
+#antre-prototype :where(h1,h2,h3,p,figure,ol,ul,fieldset) { margin: 0; }
+#antre-prototype :where(button,input,select,textarea) { font: inherit; color: inherit; }
+#antre-prototype :where(button,summary) { cursor: pointer; touch-action: manipulation; }
+#antre-prototype :where(button,input,select,textarea,summary,a):focus-visible {
+  outline: 2px solid var(--prototype-focus); outline-offset: 3px;
+}
+#antre-prototype ::selection { background: var(--prototype-selected); color: var(--prototype-ink); }
+#antre-prototype * { scrollbar-width: thin; scrollbar-color: var(--prototype-muted) var(--prototype-clear); }
+#antre-prototype :where(input,textarea) { caret-color: var(--prototype-ink); }
+#antre-prototype :where(input,textarea)::placeholder { color: var(--prototype-muted); opacity: 1; }
+#antre-prototype :where(time,output,.count) { font-variant-numeric: tabular-nums; }
+#antre-prototype a { color: inherit; }
+#antre-prototype .icon { display: block; flex: none; width: 20px; height: 20px; }
+#antre-prototype .button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 36px; max-width: 100%; padding: 7px 14px; border: 1px solid var(--prototype-line);
+  border-radius: var(--prototype-radius); background: var(--prototype-paper);
+  color: var(--prototype-ink); font-size: 13px; line-height: 20px; font-weight: var(--prototype-button-weight);
+  text-decoration: none; transition: background-color 120ms, transform 120ms;
+}
+#antre-prototype .button:hover { background: var(--prototype-hover); }
+#antre-prototype .button:active { transform: scale(.98); }
+#antre-prototype .button.primary { background: var(--prototype-primary); color: var(--prototype-on-primary); border-color: var(--prototype-clear); }
+#antre-prototype .button.primary:hover { filter: brightness(.95); }
+#antre-prototype .button.quiet { background: var(--prototype-clear); border-color: var(--prototype-clear); }
+#antre-prototype .button.quiet:hover { background: var(--prototype-hover); }
+#antre-prototype .button:disabled { cursor: not-allowed; opacity: .45; transform: none; filter: none; }
+#antre-prototype[data-theme="glaze"] .button.primary {
+  color: var(--prototype-gloss-text);
+  background: linear-gradient(var(--prototype-gloss-top),var(--prototype-gloss-mid) 52%,var(--prototype-gloss-bottom));
+  box-shadow: inset 0 1px 0 var(--prototype-gloss-highlight), inset 0 0 0 1px var(--prototype-gloss-rim);
+}
+#antre-prototype .comparison { padding: 0 0 20px; display: grid; gap: 12px; }
+#antre-prototype :is(.comparison,.source-note) { color: var(--foreground,var(--prototype-outer-ink)); }
+#antre-prototype .comparison-copy { font-size: 14px; line-height: 1.5; color: inherit; }
+#antre-prototype .comparison-copy strong { font-weight: 600; }
+#antre-prototype .control-row { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: end; }
+#antre-prototype fieldset { min-width: 0; padding: 0; border: 0; }
+#antre-prototype legend { font-size: 12px; margin-bottom: 5px; color: inherit; }
+#antre-prototype .segmented { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; background: var(--prototype-field); border-radius: var(--prototype-radius); }
+#antre-prototype .segmented .button { border: 0; min-height: 36px; padding: 6px 12px; background: var(--prototype-clear); }
+#antre-prototype .segmented .button[aria-pressed="true"] { background: var(--prototype-paper); box-shadow: inset 0 0 0 1px var(--prototype-line); }
+#antre-prototype .theme-description { font-size: 13px; color: inherit; }
+#antre-prototype .app-frame { container: antre / inline-size; width: 100%; margin-inline: auto; }
+#antre-prototype[data-layout="phone"] .app-frame { max-width: 390px; }
+#antre-prototype[data-layout="desktop"] .app-frame { width: 1280px; zoom: var(--prototype-desktop-scale,1); }
+#antre-prototype .workspace { background: var(--prototype-canvas); border: 1px solid var(--prototype-line); border-radius: var(--prototype-panel-radius); overflow: clip; }
+#antre-prototype .sidebar { display: none; }
+#antre-prototype .brand { display: flex; align-items: center; gap: 10px; font-size: 26px; font-weight: 600; letter-spacing: -.035em; }
+#antre-prototype .brand-mark { display: flex; gap: 3px; align-items: end; height: 24px; }
+#antre-prototype .brand-mark span { background: currentColor; width: 5px; height: 13px; border-radius: 3px; }
+#antre-prototype .brand-mark span:nth-child(2) { height: 22px; }
+#antre-prototype .brand-mark span:nth-child(3) { height: 17px; }
+#antre-prototype .mobile-top { display: flex; align-items: center; justify-content: space-between; padding: 16px; gap: 12px; }
+#antre-prototype .sample-label { color: var(--prototype-muted); font-size: 12px; }
+#antre-prototype .main { min-width: 0; padding: 20px 16px 16px; background: var(--prototype-paper); }
+#antre-prototype .page-header { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
+#antre-prototype h1 { font: var(--prototype-heading); letter-spacing: -.025em; text-wrap: balance; }
+#antre-prototype h2 { font-size: 16px; line-height: 1.4; font-weight: 600; }
+#antre-prototype h3 { font-size: 14px; line-height: 1.5; font-weight: 600; }
+#antre-prototype .page-description { color: var(--prototype-muted); margin-top: 7px; max-width: 55ch; font-size: 13px; }
+#antre-prototype .channel-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }
+#antre-prototype .channel-tabs { display: flex; gap: 4px; padding: 3px; background: var(--prototype-field); border-radius: var(--prototype-radius); }
+#antre-prototype .channel-tabs .button { background: var(--prototype-clear); border: 0; }
+#antre-prototype .channel-tabs .button[aria-pressed="true"] { background: var(--prototype-paper); box-shadow: inset 0 0 0 1px var(--prototype-line); }
+#antre-prototype .view-count { font-size: 12px; color: var(--prototype-muted); }
+#antre-prototype .post-list { display: grid; gap: 24px; }
+#antre-prototype .post { min-width: 0; padding: 20px; border-radius: var(--prototype-panel-radius); background: var(--prototype-canvas); }
+#antre-prototype[data-theme="quartz"] .post { background: var(--prototype-field); }
+#antre-prototype[data-theme="glaze"] .post { padding: 3px; background: var(--prototype-canvas); }
+#antre-prototype .post-content { min-width: 0; }
+#antre-prototype[data-theme="glaze"] .post-content { background: var(--prototype-paper); border-radius: 11px; padding: 20px; }
+#antre-prototype .post-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; color: var(--prototype-muted); margin-bottom: 18px; }
+#antre-prototype .status { color: var(--prototype-ink); display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
+#antre-prototype .status .icon { width: 15px; height: 15px; }
+#antre-prototype .post-time { margin-inline-start: auto; }
+#antre-prototype .thread { padding: 0; list-style: none; }
+#antre-prototype .thread-part { position: relative; display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 12px; padding-bottom: 22px; }
+#antre-prototype .thread-part:last-child { padding-bottom: 0; }
+#antre-prototype .thread-part:not(:last-child)::after { content: ""; position: absolute; left: 12px; top: 29px; bottom: 4px; width: 1px; background: var(--prototype-line); }
+#antre-prototype .part-number { width: 26px; height: 26px; display: grid; place-items: center; font-size: 12px; color: var(--prototype-muted); border: 1px solid var(--prototype-line); border-radius: var(--prototype-radius); }
+#antre-prototype .post-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; max-width: 68ch; }
+#antre-prototype .post-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--prototype-line); }
+#antre-prototype[data-theme="glaze"] .post-actions { margin-top: 0; border: 0; padding: 6px; }
+#antre-prototype .parts-label { color: var(--prototype-muted); margin-inline-end: auto; font-size: 12px; }
+#antre-prototype .context { display: none; }
+#antre-prototype .mobile-plan { margin-bottom: 20px; border-top: 1px solid var(--prototype-line); border-bottom: 1px solid var(--prototype-line); }
+#antre-prototype summary { min-height: 44px; padding: 12px 0; font-weight: 500; font-size: 13px; }
+#antre-prototype .plan-content { padding-bottom: 16px; }
+#antre-prototype .context-head { margin-bottom: 6px; }
+#antre-prototype .muted { color: var(--prototype-muted); }
+#antre-prototype .small { font-size: 12px; line-height: 1.6; }
+#antre-prototype .plan-list { list-style: none; padding: 0; margin-top: 20px; }
+#antre-prototype .plan-list li { padding: 16px 0; border-top: 1px solid var(--prototype-line); }
+#antre-prototype .plan-date { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin-bottom: 6px; }
+#antre-prototype .plan-list p { font-size: 13px; line-height: 1.6; margin-top: 4px; overflow-wrap: anywhere; }
+#antre-prototype .plan-note { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--prototype-line); }
+#antre-prototype .plan-note p { margin-top: 8px; font-size: 13px; line-height: 1.7; }
+#antre-prototype .bottom-nav { position: sticky; bottom: 0; z-index: 2; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-top: 1px solid var(--prototype-line); background: var(--prototype-paper); padding: 8px; gap: 4px; }
+#antre-prototype .nav-link { min-width: 0; border: 0; background: var(--prototype-clear); display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--prototype-radius); text-align: left; font-size: 14px; min-height: 44px; }
+#antre-prototype .nav-link:hover { background: var(--prototype-hover); }
+#antre-prototype .nav-link[aria-current="page"] { background: var(--prototype-selected); font-weight: 600; }
+#antre-prototype .nav-link .count { margin-inline-start: auto; font-size: 12px; color: var(--prototype-muted); }
+#antre-prototype .bottom-nav .nav-link { justify-content: center; flex-direction: column; gap: 4px; padding: 8px 3px; font-size: 12px; }
+#antre-prototype .bottom-nav .count { display: none; }
+#antre-prototype .editor-grid { display: grid; gap: 24px; min-width: 0; }
+#antre-prototype .editor-fields { display: grid; gap: 20px; min-width: 0; }
+#antre-prototype .field-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+#antre-prototype .field-heading label { font-weight: 500; font-size: 13px; }
+#antre-prototype textarea { display: block; resize: vertical; min-height: 160px; width: 100%; background: var(--prototype-canvas); border: 1px solid var(--prototype-input-line); border-radius: var(--prototype-field-radius); padding: 14px; line-height: 1.6; font-size: 15px; }
+#antre-prototype textarea[aria-invalid="true"] { border-color: var(--prototype-error); }
+#antre-prototype .character-count { display: block; font-size: 12px; text-align: end; margin-top: 6px; color: var(--prototype-muted); }
+#antre-prototype .editor-footer { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 20px; align-items: center; }
+#antre-prototype .editor-footer .primary { margin-inline-start: auto; }
+#antre-prototype .validation { margin-top: 12px; font-size: 13px; min-height: 20px; color: var(--prototype-muted); }
+#antre-prototype .validation.error { color: var(--prototype-error); }
+#antre-prototype .live-preview { border-top: 1px solid var(--prototype-line); padding-top: 20px; min-width: 0; }
+#antre-prototype .preview-label { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 20px; }
+#antre-prototype .preview-author { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+#antre-prototype .avatar { display: grid; place-items: center; width: 32px; height: 32px; background: var(--prototype-field); border-radius: 50%; font-size: 12px; font-weight: 600; }
+#antre-prototype .schedule-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--prototype-line); }
+#antre-prototype .schedule-form h3 { margin-bottom: 6px; }
+#antre-prototype .time-fields { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+#antre-prototype .time-fields label { display: grid; gap: 6px; min-width: 0; font-size: 12px; flex: 1 1 140px; }
+#antre-prototype .time-fields input { min-width: 0; max-width: 100%; width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--prototype-input-line); border-radius: var(--prototype-radius); background: var(--prototype-paper); }
+#antre-prototype .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#antre-prototype .schedule-stamp { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; font-size: 14px; }
+#antre-prototype .schedule-stamp .icon { color: var(--prototype-muted); }
+#antre-prototype .empty { padding: 20px 0 60px; }
+#antre-prototype .empty p { color: var(--prototype-muted); margin: 8px 0 16px; }
+#antre-prototype .notice { padding: 12px 16px; background: var(--prototype-field); font-size: 13px; border-bottom: 1px solid var(--prototype-line); }
+#antre-prototype .notice:empty { display: none; }
+#antre-prototype .edit-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; margin-bottom: 20px; background: var(--prototype-field); border-radius: var(--prototype-panel-radius); }
+#antre-prototype .edit-recovery p { flex: 1 1 240px; font-size: 13px; }
+#antre-prototype .source-note { display: flex; flex-wrap: wrap; gap: 6px 16px; padding-top: 16px; font-size: 12px; line-height: 1.6; color: inherit; }
+#antre-prototype .source-note p { flex-basis: 100%; }
+@container antre (min-width: 700px) {
+  #antre-prototype .workspace { display: grid; grid-template-columns: 168px minmax(0,1fr); min-height: 780px; align-items: start; }
+  #antre-prototype .sidebar { display: flex; flex-direction: column; align-self: stretch; padding: 26px 12px 20px; gap: 32px; }
+  #antre-prototype .sidebar .brand { padding-inline: 10px; }
+  #antre-prototype .sidebar nav { display: grid; gap: 6px; }
+  #antre-prototype .sidebar-foot { margin-top: auto; padding: 12px; font-size: 12px; color: var(--prototype-muted); }
+  #antre-prototype .main { padding: 28px 24px 32px; min-height: 780px; }
+  #antre-prototype .mobile-top, #antre-prototype .bottom-nav { display: none; }
+  #antre-prototype .context { display: block; grid-column: 2; padding: 24px; border-top: 1px solid var(--prototype-line); }
+  #antre-prototype .mobile-plan { display: none; }
+  #antre-prototype .notice { grid-column: 2; }
+  #antre-prototype .notice:not(:empty) + .main { min-height: 720px; }
+}
+@container antre (min-width: 1120px) {
+  #antre-prototype .workspace { grid-template-columns: 204px minmax(0,1fr) 272px; }
+  #antre-prototype .sidebar { grid-row: 1 / span 3; padding-inline: 18px; }
+  #antre-prototype .notice { grid-column: 2; }
+  #antre-prototype .main { grid-column: 2; padding: 32px; }
+  #antre-prototype .context { grid-column: 3; grid-row: 1 / span 3; border: 0; padding: 34px 24px; }
+  #antre-prototype .page-header { margin-bottom: 26px; }
+}
+@container antre (min-width: 1200px) {
+  #antre-prototype .editor-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 32px; }
+  #antre-prototype .live-preview { padding: 0 0 0 28px; border-top: 0; border-left: 1px solid var(--prototype-line); }
+}
+@container antre (max-width: 699px) {
+  #antre-prototype .button { min-height: 44px; }
+  #antre-prototype .main { padding-top: 8px; }
+  #antre-prototype .page-header { gap: 12px; }
+  #antre-prototype .page-header .page-description { max-width: 32ch; }
+  #antre-prototype .post { padding: 16px; }
+  #antre-prototype[data-theme="glaze"] .post { padding: 3px; }
+  #antre-prototype[data-theme="glaze"] .post-content { padding: 16px; }
+  #antre-prototype .post-text { font-size: 14px; }
+  #antre-prototype .post-actions .parts-label { flex-basis: 100%; }
+  #antre-prototype .thread-part { grid-template-columns: 24px minmax(0,1fr); gap: 9px; }
+}
+@media (pointer: coarse), (max-width: 699px) {
+  #antre-prototype .button, #antre-prototype .segmented .button, #antre-prototype .nav-link { min-height: 44px; }
+  #antre-prototype :where(textarea,input,select) { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #antre-prototype .button { transition: none; }
+  #antre-prototype .button:active { transform: none; }
+}
+</style>
+</head>
+<body>
+<section id="antre-prototype" data-theme="quartz" data-layout="auto" data-appearance="light" aria-label="Antre design comparison">
+  <header class="comparison">
+    <p class="comparison-copy"><strong>Try Antre in three design directions.</strong> Interactive prototype with sample posts. Nothing publishes.</p>
+    <div class="control-row">
+      <fieldset><legend>Theme</legend><div class="segmented" id="theme-controls">
+        <button class="button" data-preference="theme" data-value="quartz" aria-pressed="true">Quartz</button>
+        <button class="button" data-preference="theme" data-value="lime" aria-pressed="false">Lime</button>
+        <button class="button" data-preference="theme" data-value="glaze" aria-pressed="false">Glaze</button>
+      </div></fieldset>
+      <fieldset><legend>Layout</legend><div class="segmented">
+        <button class="button" data-preference="layout" data-value="auto" aria-pressed="true">Auto</button>
+        <button class="button" data-preference="layout" data-value="phone" aria-pressed="false">Phone</button>
+        <button class="button" data-preference="layout" data-value="desktop" aria-pressed="false">Desktop</button>
+      </div></fieldset>
+      <fieldset><legend>Appearance</legend><div class="segmented">
+        <button class="button" data-preference="appearance" data-value="light" aria-pressed="true">Light</button>
+        <button class="button" data-preference="appearance" data-value="dark" aria-pressed="false">Dark</button>
+      </div></fieldset>
+      <button class="button" data-action="reset">Reset sample</button>
+    </div>
+    <p class="theme-description" id="theme-description"></p>
+    <p class="theme-description" id="layout-description" role="status" hidden></p>
+  </header>
+  <div class="app-frame"><div class="workspace" id="workspace"></div></div>
+  <footer class="source-note">
+    <a href="https://design.how/systems/quartz" target="_blank" rel="noreferrer">Quartz source</a>
+    <a href="https://design.how/systems/lime" target="_blank" rel="noreferrer">Lime source</a>
+    <a href="https://design.how/systems/glaze" target="_blank" rel="noreferrer">Glaze source</a>
+    <p>Theme studies adapted from design.how. System font preview. Themes © 2026 Arlan Marat, MIT. Sample week: 26–30 October 2026, Asia/Jakarta (UTC+7). Reload or reset clears edits.</p>
+  </footer>
+</section>
+<script>
+(() => {
+  'use strict';
+  const root = document.getElementById('antre-prototype');
+  const workspace = document.getElementById('workspace');
+  const allowed = {
+    theme: ['quartz','lime','glaze'], layout: ['auto','phone','desktop'],
+    appearance: ['light','dark'], view: ['drafts','schedule','library','compose']
+  };
+  const preferences = { theme: 'quartz', layout: 'auto', appearance: 'light', view: 'drafts' };
+  try {
+    const query = new URLSearchParams(location.search);
+    for (const key of Object.keys(allowed)) if (allowed[key].includes(query.get(key))) preferences[key] = query.get(key);
+  } catch { /* Embedded documents may have no usable URL. */ }
+  const icons = {
+    drafts: 'M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20V3.5ZM14 3.5V8h4M10 12h5M10 15.5h5',
+    schedule: 'M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-10ZM4 10h16M8.5 3v4M15.5 3v4M8 14h.01M12 14h.01M16 14h.01',
+    library: 'M4 20V9M10 20V4M16 20v-8M21 20H3', plus: 'M12 5v14M5 12h14',
+    clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 2',
+    queue: 'M4 6h12M4 11h12M4 16h7M18 13v7M14.5 16.5h7',
+    check: 'M5 12.5l4.5 4.5L19 7', edit: 'M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3ZM14.5 7.5l2 2',
+    left: 'M15 5l-7 7 7 7', close: 'M6 6l12 12M18 6 6 18'
+  };
+  const svg = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]}"></path></svg>`;
+  const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const seed = [
+    { id: 1, channel: 'threads', status: 'drafts', parts: [
+      'Small releases make room for better questions.\n\nInstead of asking “Is the whole thing ready?”, ask “What can someone use today?”',
+      'For our next release, we kept the core flow and cut three half-finished extras.\n\nThe review got shorter. The feedback got more specific.',
+      'A smaller scope is not a smaller ambition. It is a way to put the work in someone’s hands while there is still time to change it.'
+    ]},
+    { id: 2, channel: 'threads', status: 'drafts', parts: [
+      'Keep a place for the rough version.\n\nA sentence in a draft can become a post. A sentence you keep rewriting in your head has nowhere to go.',
+      'My rule this week: write the thought first, find the opening line later. The useful part is often hiding in the second paragraph.'
+    ]},
+    { id: 3, channel: 'linkedin', status: 'drafts', parts: [
+      'A release note is a product decision.\n\nWriting one before a release forces us to name what changed, who it helps, and what they can do next.\n\nIf the explanation needs a diagram of our internal architecture, we probably have more work to do.\n\nThis week, we are starting with the sentence we want someone to read after they update. Then we are checking whether the product delivers on it.'
+    ]},
+    { id: 4, channel: 'threads', status: 'schedule', date: '2026-10-27', time: '09:00', parts: [
+      'The best part of a writing habit is having something to come back to.\n\nNot every draft needs to be finished in the same sitting.',
+      'Leave a note for tomorrow: what you were trying to say, and the example you still need. A small handoff to your future self.'
+    ]},
+    { id: 5, channel: 'linkedin', status: 'schedule', date: '2026-10-28', time: '12:30', parts: [
+      'Before we add another setting, we walk through the task without it.\n\nSometimes the missing feature is a clearer label. Sometimes it is a better default. And sometimes the setting earns its place.\n\nThe walkthrough helps us tell the difference.'
+    ]},
+    { id: 6, channel: 'threads', status: 'library', date: '2026-10-26', time: '09:00', parts: [
+      'A useful draft does one thing: it gives you something concrete to improve.\n\nStart with the example. You can write the introduction after you know what you mean.'
+    ]}
+  ];
+  const freshPosts = () => seed.map(post => ({...post, parts: [...post.parts]}));
+  let posts = freshPosts();
+  let channel = 'threads';
+  let editor = null;
+  let timePicker = null;
+  let message = '';
+  let nextId = 7;
+  const channelName = value => value === 'threads' ? 'Threads' : 'LinkedIn';
+  const count = view => posts.filter(post => post.status === view).length;
+  const findPost = id => posts.find(post => post.id === Number(id));
+  const dateLabel = value => {
+    const date = new Date(`${value}T12:00:00+07:00`);
+    return new Intl.DateTimeFormat('en-GB', {day:'numeric',month:'short',weekday:'short',timeZone:'Asia/Jakarta'}).format(date);
+  };
+  function syncUrl() {
+    try {
+      if (!['http:','https:','file:'].includes(location.protocol)) return;
+      const url = new URL(location.href);
+      Object.entries(preferences).forEach(([key,value]) => url.searchParams.set(key,value));
+      history.replaceState(null, '', url);
+    } catch { /* An opaque iframe must remain interactive. */ }
+  }
+  function applyPreferences() {
+    for (const key of ['theme','layout','appearance']) root.dataset[key] = preferences[key];
+    root.querySelectorAll('[data-preference]').forEach(button => {
+      button.setAttribute('aria-pressed', String(preferences[button.dataset.preference] === button.dataset.value));
+    });
+    const descriptions = {
+      quartz: 'Quartz: cool grey fields, compact type, 6px controls and navy-black actions.',
+      lime: 'Lime: warm surfaces, rounded controls and a lime primary action.',
+      glaze: 'Glaze: monochrome, inset paper panels and gloss on the primary action.'
+    };
+    document.getElementById('theme-description').textContent = descriptions[preferences.theme];
+    fitDesktop();
+    syncUrl();
+  }
+  function fitDesktop() {
+    const scale = Math.min(1,(root.clientWidth || 1280) / 1280);
+    root.style.setProperty('--prototype-desktop-scale',String(scale));
+    const note = document.getElementById('layout-description');
+    note.hidden = preferences.layout !== 'desktop' || scale === 1;
+    note.textContent = note.hidden ? '' : `1280px desktop preview scaled to ${Math.round(scale*100)}%. Choose Auto or Phone for full-size controls.`;
+  }
+  new ResizeObserver(fitDesktop).observe(root);
+  function navigation() {
+    return ['drafts','schedule','library'].map(view => `<button class="nav-link" data-view="${view}"${preferences.view === view ? ' aria-current="page"' : ''}>${svg(view)}<span>${view[0].toUpperCase()+view.slice(1)}</span><span class="count">${posts.filter(post => post.status === view && post.channel === channel).length}</span></button>`).join('');
+  }
+  function plan() {
+    const queued = posts.filter(post => post.status === 'schedule').sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+    return `<h2 class="context-head">Posting plan</h2><p class="muted small">Sample week of 26 October 2026<br>Asia/Jakarta (UTC+7)</p>
+      <ol class="plan-list">${queued.map(post => `<li><div class="plan-date"><time>${escape(dateLabel(post.date))}</time><time>${escape(post.time)}</time></div><strong>${channelName(post.channel)}</strong><p>${escape(post.parts[0].split('\n')[0])}</p><button class="button quiet" data-action="show-scheduled" data-id="${post.id}">Review queued post</button></li>`).join('') || '<li>No posts queued. Choose a draft to add to the plan.</li>'}</ol>
+      <div class="plan-note"><h3>A little room to write</h3><p class="muted">Review a draft, check the preview, then choose its time. You can move it before it goes out.</p><p class="small muted">${queued.length} queued in this sample. Publication is simulated.</p></div>`;
+  }
+  function thread(parts, postChannel) {
+    if (postChannel === 'linkedin') return `<div class="post-text">${escape(parts.join('\n\n'))}</div>`;
+    return `<ol class="thread" aria-label="Thread with ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}">${parts.map((part,index) => `<li class="thread-part"><span class="part-number" aria-hidden="true">${index+1}</span><p class="post-text">${escape(part || 'Your words will appear here.')}</p></li>`).join('')}</ol>`;
+  }
+  function picker(postId) {
+    if (!timePicker || timePicker.id !== postId) return '';
+    return `<form class="schedule-form" id="time-form"><h3>${timePicker.moving ? 'Move scheduled time' : 'Choose a posting time'}</h3><p class="small muted">Sample dates from 26–30 October 2026. Asia/Jakarta (UTC+7).</p>
+      <div class="time-fields"><label>Date<input name="date" type="date" min="2026-10-26" max="2026-10-30" value="${escape(timePicker.date)}" required></label><label>Time<input name="time" type="time" value="${escape(timePicker.time)}" required></label></div>
+      <div class="form-actions"><button class="button" type="button" data-action="cancel-time">Cancel</button><button class="button primary" type="submit">${timePicker.moving ? 'Save new time' : 'Add to queue'}</button></div><p class="validation" id="time-feedback" role="status"></p></form>`;
+  }
+  function postCard(post) {
+    const status = {drafts: 'Draft', schedule: 'Queued', library: 'Published (sample)'}[post.status];
+    const stateIcon = post.status === 'library' ? 'check' : post.status === 'schedule' ? 'clock' : 'drafts';
+    return `<article class="post" aria-label="${escape(post.parts[0].split('\n')[0])}">
+      <div class="post-content"><div class="post-meta"><span class="status">${svg(stateIcon)}${status}</span><span>${channelName(post.channel)}</span><span class="post-time">${post.status === 'drafts' ? 'Edited in this sample' : escape(dateLabel(post.date))+' at '+escape(post.time)}</span></div>${thread(post.parts,post.channel)}</div>
+      <div class="post-actions"><span class="parts-label">${post.channel === 'threads' ? post.parts.length+'-part thread' : 'Text post'}</span>
+      ${post.status === 'drafts' ? `<button class="button" data-action="edit" data-id="${post.id}">Edit</button><button class="button" data-action="queue" data-id="${post.id}">${svg('queue')}Queue</button>` : ''}
+      ${post.status === 'schedule' ? `<button class="button" data-action="move" data-id="${post.id}">Move time</button><button class="button" data-action="publish" data-id="${post.id}">Simulate publication</button>` : ''}
+      ${post.status === 'library' ? `<button class="button" data-action="reuse" data-id="${post.id}">Reuse as draft</button>` : ''}</div>${picker(post.id)}</article>`;
+  }
+  function listView() {
+    const filtered = posts.filter(post => post.status === preferences.view && post.channel === channel).sort((a,b) => `${a.date || ''}${a.time || ''}`.localeCompare(`${b.date || ''}${b.time || ''}`));
+    if (!filtered.length) return `<div class="empty"><h2>${preferences.view === 'schedule' ? 'No posts queued for '+channelName(channel) : preferences.view === 'library' ? 'No published samples for '+channelName(channel) : 'No drafts for '+channelName(channel)}</h2><p>${preferences.view === 'library' ? 'Simulate publication from Schedule to see a post here.' : 'Start with a thought and give it a place in the plan.'}</p><button class="button" data-action="${preferences.view === 'library' ? 'go-schedule' : 'new'}">${preferences.view === 'library' ? 'Open schedule' : 'Write a post'}</button></div>`;
+    return `<div class="post-list">${filtered.map(post => post.status === 'schedule' ? `<section><div class="schedule-stamp">${svg('schedule')}<strong>${escape(dateLabel(post.date))}</strong><span>${escape(post.time)} WIB</span></div>${postCard(post)}</section>` : postCard(post)).join('')}</div>`;
+  }
+  function ensureEditor() {
+    if (!editor) editor = {id: null, channel, parts: ['']};
+  }
+  function hasPendingEdits() {
+    if (!editor) return false;
+    const saved = editor.id ? findPost(editor.id) : null;
+    if (!saved) return editor.parts.length > 1 || editor.parts.some(part => part.length > 0);
+    return editor.channel !== saved.channel || editor.parts.length !== saved.parts.length || editor.parts.some((part,index) => part !== saved.parts[index]);
+  }
+  function editRecovery() {
+    if (preferences.view === 'compose' || !hasPendingEdits()) return '';
+    return `<section class="edit-recovery" aria-label="Unsaved post"><p>You have an unsaved ${channelName(editor.channel)} post. Resume it, or discard it to start another.</p><div class="form-actions"><button class="button" data-action="resume">Resume edit</button><button class="button" data-action="discard-edit">Discard edit</button></div></section>`;
+  }
+  function resumeEditor() {
+    preferences.view = 'compose'; channel = editor.channel; timePicker = null; render(true);
+    document.getElementById('part-0').focus({preventScroll:true});
+  }
+  function editorView() {
+    ensureEditor();
+    return `<div class="editor-grid"><div><div class="editor-fields">${editor.parts.map((part,index) => `<div><div class="field-heading"><label for="part-${index}">${editor.channel === 'threads' ? 'Thread part '+(index+1) : 'Post text'}</label>${editor.parts.length > 1 ? `<button class="button quiet" data-action="remove-part" data-index="${index}" aria-label="Remove thread part ${index+1}">${svg('close')}</button>` : ''}</div><textarea id="part-${index}" data-part="${index}" aria-describedby="count-${index} editor-feedback" placeholder="What would you like to share?">${escape(part)}</textarea><output class="character-count" id="count-${index}" for="part-${index}"></output></div>`).join('')}</div>
+      ${editor.channel === 'threads' ? `<button class="button quiet" data-action="add-part" style="margin-top:12px">${svg('plus')}Add thread part</button>` : ''}
+      <p class="validation" id="editor-feedback" role="status"></p><div class="editor-footer"><button class="button" data-action="save" id="save-draft">Save draft</button><button class="button primary" data-action="queue-editor" id="queue-editor">${svg('queue')}Queue post</button></div>${picker('editor')}
+      <p class="small muted" style="margin-top:16px">Edits stay in this prototype until reset or reload. Nothing is sent to Threads or LinkedIn.</p></div>
+      <section class="live-preview" aria-label="Live post preview"><div class="preview-label"><h2>Live preview</h2><span class="small muted">${channelName(editor.channel)}</span></div><div class="preview-author"><span class="avatar" aria-hidden="true">A</span><div><strong>Antre sample</strong><p class="small muted">Sample account</p></div></div><div id="preview-text"></div></section></div>`;
+  }
+  function validateEditor() {
+    if (!editor || preferences.view !== 'compose') return false;
+    const limit = editor.channel === 'threads' ? 500 : 3000;
+    let problem = '';
+    editor.parts.forEach((part,index) => {
+      const length = Array.from(part).length;
+      const invalid = length > limit || !part.trim();
+      document.getElementById(`count-${index}`).textContent = `${length} / ${limit} characters`;
+      document.getElementById(`part-${index}`).setAttribute('aria-invalid',String(invalid));
+      if (!part.trim()) problem = 'Write something in each part, or remove the empty part.';
+      if (length > limit) problem = `Part ${index+1} exceeds ${limit} characters. Shorten it to save or queue.`;
+    });
+    const feedback = document.getElementById('editor-feedback');
+    feedback.textContent = problem || 'Ready to save or choose a posting time.';
+    feedback.classList.toggle('error',Boolean(problem));
+    document.getElementById('save-draft').disabled = Boolean(problem);
+    document.getElementById('queue-editor').disabled = Boolean(problem);
+    document.getElementById('preview-text').innerHTML = thread(editor.parts,editor.channel);
+    return !problem;
+  }
+  function render(focusTitle = false) {
+    const view = preferences.view;
+    const labels = {drafts:'Drafts',schedule:'Schedule',library:'Library',compose:editor?.id ? 'Edit draft' : 'New post'};
+    const descriptions = {drafts:'Review the words. Choose when they go out.',schedule:'A place for each post in the week ahead.',library:'Published samples, ready to revisit.',compose:'Find the words, then check how they read.'};
+    const brand = '<span class="brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>antre</span>';
+    workspace.innerHTML = `<aside class="sidebar" aria-label="Antre workspace">${brand}<nav aria-label="Workspace">${navigation()}</nav><div class="sidebar-foot">Personal workspace<br>Prototype / sample data</div></aside>
+      <div class="mobile-top">${brand}<span class="sample-label">Sample workspace</span></div>
+      <div class="notice" role="status" aria-live="polite">${escape(message)}</div>
+      <main class="main"><header class="page-header"><div><h1 tabindex="-1" id="view-title">${labels[view]}</h1><p class="page-description">${descriptions[view]}</p></div>${view !== 'compose' ? `<button class="button primary" data-action="new">${svg('plus')}New post</button>` : '<button class="button" data-view="drafts">Back to drafts</button>'}</header>
+      ${editRecovery()}
+      <div class="channel-row"><div class="channel-tabs" role="group" aria-label="Post channel">${['threads','linkedin'].map(value => `<button class="button" data-channel="${value}" aria-pressed="${channel === value}">${channelName(value)}</button>`).join('')}</div><span class="view-count">${view === 'compose' ? 'Sample account' : posts.filter(post=>post.status===view && post.channel===channel).length+' '+(view === 'drafts' ? 'drafts' : view === 'schedule' ? 'queued' : 'published')}</span></div>
+      ${view !== 'compose' ? `<details class="mobile-plan"><summary>Posting plan / ${count('schedule')} queued</summary><div class="plan-content">${plan()}</div></details>` : ''}
+      ${view === 'compose' ? editorView() : listView()}</main><aside class="context" aria-label="Posting context">${plan()}</aside><nav class="bottom-nav" aria-label="Phone workspace">${navigation()}</nav>`;
+    validateEditor();
+    syncUrl();
+    if (focusTitle) document.getElementById('view-title').focus({preventScroll:true});
+  }
+  function openTime(id, moving = false) {
+    const post = id === 'editor' ? null : findPost(id);
+    timePicker = {id: id === 'editor' ? id : Number(id), moving, date: post?.date || '2026-10-29', time: post?.time || '09:00'};
+    render();
+    document.querySelector('#time-form input').focus({preventScroll:true});
+  }
+  function storeDraft() {
+    let post = editor.id ? findPost(editor.id) : null;
+    if (post) Object.assign(post,{parts:[...editor.parts],channel:editor.channel});
+    else { post = {id:nextId++,channel:editor.channel,status:'drafts',parts:[...editor.parts]}; posts.unshift(post); editor.id = post.id; }
+    return post;
+  }
+  root.addEventListener('input',event => {
+    if (event.target.matches('[data-part]')) {
+      editor.parts[Number(event.target.dataset.part)] = event.target.value;
+      validateEditor();
+    }
+    if (timePicker && ['date','time'].includes(event.target.name)) timePicker[event.target.name] = event.target.value;
+  });
+  root.addEventListener('submit',event => {
+    if (event.target.id !== 'time-form') return;
+    event.preventDefault();
+    const form = event.target;
+    const data = new FormData(form);
+    const date = String(data.get('date'));
+    const time = String(data.get('time'));
+    if (!form.checkValidity() || !/^2026-10-(26|27|28|29|30)$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      document.getElementById('time-feedback').textContent = 'Choose a date from 26–30 October and a valid time.';
+      form.reportValidity(); return;
+    }
+    if (timePicker.id === 'editor' && !validateEditor()) return;
+    const fromEditor = timePicker.id === 'editor';
+    const post = fromEditor ? storeDraft() : findPost(timePicker.id);
+    Object.assign(post,{status:'schedule',date,time});
+    message = `${timePicker.moving ? 'Time moved' : 'Post queued'} for ${dateLabel(date)} at ${time} WIB. Sample only.`;
+    channel = post.channel; preferences.view = 'schedule'; timePicker = null;
+    if (fromEditor) editor = null;
+    render(true);
+  });
+  root.addEventListener('click',event => {
+    const button = event.target.closest('button');
+    if (!button || button.disabled) return;
+    if (button.dataset.preference) {
+      preferences[button.dataset.preference] = button.dataset.value;
+      applyPreferences(); return;
+    }
+    if (button.dataset.view) {
+      preferences.view = button.dataset.view; timePicker = null; message = ''; render(true); return;
+    }
+    if (button.dataset.channel) {
+      channel = button.dataset.channel; timePicker = null;
+      if (preferences.view === 'compose') {
+        ensureEditor(); editor.channel = channel;
+        if (channel === 'linkedin') editor.parts = [editor.parts.join('\n\n')];
+      }
+      render(); return;
+    }
+    const action = button.dataset.action;
+    const post = findPost(button.dataset.id);
+    if (action === 'reset') {
+      posts = freshPosts(); nextId = 7; editor = null; timePicker = null; channel = 'threads';
+      preferences.view = 'drafts'; message = 'Sample posts restored. Your theme and layout are kept.'; render(true);
+    } else if (action === 'new') {
+      const pending = hasPendingEdits();
+      if (!pending) editor = {id:null,channel,parts:['']};
+      message = pending ? 'Resumed your unsaved post.' : ''; resumeEditor();
+    } else if (action === 'resume') {
+      message = 'Resumed your unsaved post.'; resumeEditor();
+    } else if (action === 'discard-edit') {
+      editor = null; message = 'Unsaved edits discarded.'; render(true);
+    } else if (action === 'edit' || action === 'reuse') {
+      if (hasPendingEdits()) {
+        message = 'Resume or discard your unsaved post before opening another.'; render(true); return;
+      }
+      editor = {id: action === 'reuse' ? null : post.id,channel:post.channel,parts:[...post.parts]};
+      preferences.view = 'compose'; channel = post.channel; message = ''; timePicker = null; render(true);
+    } else if (action === 'add-part') {
+      editor.parts.push(''); render(); document.getElementById(`part-${editor.parts.length-1}`).focus({preventScroll:true});
+    } else if (action === 'remove-part') {
+      editor.parts.splice(Number(button.dataset.index),1); render(); document.getElementById('part-0').focus({preventScroll:true});
+    } else if (action === 'save' && validateEditor()) {
+      storeDraft(); channel = editor.channel; preferences.view = 'drafts'; timePicker = null; editor = null;
+      message = 'Draft saved in this prototype.'; render(true);
+    } else if (action === 'queue' || action === 'move') {
+      if (hasPendingEdits() && editor.id === post.id) {
+        message = 'This post has unsaved edits. Resume them to save or queue this version.'; render(true); return;
+      }
+      openTime(post.id,action === 'move');
+    }
+    else if (action === 'queue-editor' && validateEditor()) openTime('editor');
+    else if (action === 'cancel-time') { timePicker = null; render(); }
+    else if (action === 'publish') {
+      post.status = 'library'; preferences.view = 'library'; timePicker = null;
+      message = 'Publication simulated. The sample post is now in Library. Nothing was sent.'; render(true);
+    } else if (action === 'show-scheduled') {
+      channel = post.channel; preferences.view = 'schedule'; timePicker = null; message = ''; render(true);
+    } else if (action === 'go-schedule') { preferences.view = 'schedule'; render(true); }
+  });
+  window.antrePrototype = Object.freeze({snapshot: () => JSON.parse(JSON.stringify({preferences,channel,posts,editor,timePicker,counts:{drafts:count('drafts'),schedule:count('schedule'),library:count('library')}}))});
+  applyPreferences(); render();
+})();
+</script>
+</body>
+</html>

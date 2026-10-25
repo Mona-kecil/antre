@@ -1,25 +1,26 @@
+import { v } from "convex/values";
+import { z } from "zod";
+import { isoDay } from "../src/lib/time";
+import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import type {
+  OwnedActionCtx as ActionCtx,
+  OwnedMutationCtx as MutationCtx,
+  OwnedQueryCtx as QueryCtx,
+} from "./access";
+import { ownerAction } from "./auth";
 import {
   creationOrder,
-  postsByKind,
-  unindexedPosts,
-  patchPost,
   insertPost,
+  patchPost,
+  postsByKind,
   deletePost as removePost,
+  unindexedPosts,
 } from "./lib/postStore";
-import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
-import { z } from "zod";
-import { internal } from "./_generated/api";
-import {
-  action,
-  internalAction,
-  internalMutation,
-  internalQuery,
-  type ActionCtx,
-} from "./_generated/server";
-import { withSecret } from "./auth";
+import { readSettings } from "./lib/scheduling";
 import { threads } from "./publishing";
 import { metrics } from "./schema";
+import { workspaceAction, workspaceMutation, workspaceQuery } from "./scoped";
 
 const pageSchema = z.object({
   data: z.array(
@@ -65,7 +66,7 @@ function values(body: unknown) {
   );
 }
 
-export const importPage = internalMutation({
+export const importPage = workspaceMutation({
   args: {
     posts: v.array(
       v.object({
@@ -76,7 +77,7 @@ export const importPage = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { posts }) => {
+  handler: async (ctx: MutationCtx, { posts }) => {
     const existing = await postsByKind(ctx, "publishing").collect();
     const legacy = await unindexedPosts(ctx).collect();
     const known = new Set(legacy.map((post) => post.publishedIds[0]));
@@ -94,13 +95,14 @@ export const importPage = internalMutation({
       if (
         await ctx.db
           .query("posts")
-          .withIndex("by_rootPublishedId", (q) =>
-            q.eq("rootPublishedId", post.id),
+          .withIndex("workspace_by_rootPublishedId", (q) =>
+            q.eq("workspaceId", ctx.workspaceId).eq("rootPublishedId", post.id),
           )
           .first()
       )
         continue;
       await insertPost(ctx, {
+        workspaceId: ctx.workspaceId,
         parts: [{ text: post.text }],
         publishedIds: [post.id],
         source: "threads",
@@ -119,9 +121,9 @@ export type RemovalPage = {
   continueCursor: string;
 };
 
-export const removalCandidates = internalQuery({
+export const removalCandidates = workspaceQuery({
   args: { cutoff: v.number(), cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, { cutoff, cursor }): Promise<RemovalPage> => {
+  handler: async (ctx: QueryCtx, { cutoff, cursor }): Promise<RemovalPage> => {
     const result = await postsByKind(
       ctx,
       "published",
@@ -142,7 +144,7 @@ export const removalCandidates = internalQuery({
   },
 });
 
-export const removeMissing = internalMutation({
+export const removeMissing = workspaceMutation({
   args: {
     posts: v.array(
       v.object({
@@ -152,12 +154,13 @@ export const removeMissing = internalMutation({
     ),
     cutoff: v.number(),
   },
-  handler: async (ctx, { posts, cutoff }) => {
+  handler: async (ctx: MutationCtx, { posts, cutoff }) => {
     let removed = 0;
     for (const candidate of posts) {
       const post = await ctx.db.get(candidate.id);
       if (
         !post ||
+        post.workspaceId !== ctx.workspaceId ||
         post.status.kind !== "published" ||
         post.status.at >= cutoff ||
         (post.publishedIds[0] ?? null) !== candidate.publishedId
@@ -165,7 +168,9 @@ export const removeMissing = internalMutation({
         continue;
       const replies = await ctx.db
         .query("replies")
-        .withIndex("by_postId", (q) => q.eq("postId", post._id))
+        .withIndex("workspace_by_postId", (q) =>
+          q.eq("workspaceId", ctx.workspaceId).eq("postId", post._id),
+        )
         .collect();
       for (const reply of replies) await ctx.db.delete(reply._id);
       await removePost(ctx, post._id);
@@ -175,9 +180,9 @@ export const removeMissing = internalMutation({
   },
 });
 
-export const metricTargets = internalQuery({
+export const metricTargets = workspaceQuery({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx: QueryCtx) => {
     const recent = await postsByKind(
       ctx,
       "published",
@@ -185,8 +190,11 @@ export const metricTargets = internalQuery({
     ).collect();
     const missing = await ctx.db
       .query("posts")
-      .withIndex("by_kind_metrics", (q) =>
-        q.eq("status.kind", "published").eq("metrics.syncedAt", undefined),
+      .withIndex("workspace_by_kind_metrics", (q) =>
+        q
+          .eq("workspaceId", ctx.workspaceId)
+          .eq("status.kind", "published")
+          .eq("metrics.syncedAt", undefined),
       )
       .collect();
     const posts = new Map(
@@ -198,25 +206,34 @@ export const metricTargets = internalQuery({
   },
 });
 
-export const saveMetrics = internalMutation({
+export const saveMetrics = workspaceMutation({
   args: { id: v.id("posts"), metrics },
-  handler: async (ctx, { id, metrics }) => {
-    if (!(await ctx.db.get(id))) return false;
+  handler: async (ctx: MutationCtx, { id, metrics }) => {
+    const post = await ctx.db.get(id);
+    if (!post || post.workspaceId !== ctx.workspaceId) return false;
     await patchPost(ctx, id, { metrics });
     return true;
   },
 });
 
-export const saveFollowers = internalMutation({
+export const saveFollowers = workspaceMutation({
   args: { at: v.number(), count: v.number() },
-  handler: async (ctx, { at, count }) => {
-    const day = (time: number) =>
-      Math.floor((time + 7 * 3_600_000) / 86_400_000);
-    const existing = (await ctx.db.query("followers").collect()).find(
-      (row) => day(row.at) === day(at),
-    );
+  handler: async (ctx: MutationCtx, { at, count }) => {
+    const timeZone = (await readSettings(ctx)).timeZone;
+    const day = (time: number) => isoDay(time, timeZone);
+    const existing = (
+      await ctx.db
+        .query("followers")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+        .collect()
+    ).find((row) => day(row.at) === day(at));
     if (existing) await ctx.db.patch(existing._id, { at, count });
-    else await ctx.db.insert("followers", { at, count });
+    else
+      await ctx.db.insert("followers", {
+        workspaceId: ctx.workspaceId,
+        at,
+        count,
+      });
   },
 });
 
@@ -227,15 +244,17 @@ type SyncResult = {
   replies: number;
   error: string | null;
 };
-export const run = internalAction({
+export const run = workspaceAction({
   args: {},
-  handler: async (ctx): Promise<SyncResult> => {
+  handler: async (ctx: ActionCtx): Promise<SyncResult> => {
     const startedAt = Date.now();
     let imported = 0;
     let removed = 0;
     let metricsUpdated = 0;
     const errors = new Set<string>();
-    const account = await ctx.runQuery(internal.publishing.getAccount, {});
+    const account = await ctx.runQuery(internal.publishing.getAccount, {
+      workspaceId: ctx.workspaceId,
+    });
     if (
       !account ||
       account.needsReconnect ||
@@ -248,6 +267,13 @@ export const run = internalAction({
         replies: 0,
         error: "Threads account needs reconnecting",
       };
+    const scopedThreads = async (...args: Parameters<typeof threads>) => {
+      await ctx.runQuery(internal.access.background, {
+        workspaceId: ctx.workspaceId,
+        expectedToken: account.accessToken,
+      });
+      return threads(...args);
+    };
     const recordError = (context: string, error: unknown) =>
       errors.add(
         `${context}: ${error instanceof Error ? error.message.replaceAll(account.accessToken, "[redacted]") : "Threads request failed"}`,
@@ -258,7 +284,7 @@ export const run = internalAction({
       const seenIds = new Set<string>();
       do {
         const parsed = pageSchema.safeParse(
-          await threads("me/threads", account.accessToken, {
+          await scopedThreads("me/threads", account.accessToken, {
             fields: "id,text,timestamp,permalink,media_type",
             limit: "100",
             ...(after ? { after } : {}),
@@ -269,6 +295,8 @@ export const run = internalAction({
         const page = parsed.data;
         for (const post of page.data) seenIds.add(post.id);
         imported += await ctx.runMutation(internal.sync.importPage, {
+          workspaceId: ctx.workspaceId,
+          expectedToken: account.accessToken,
           posts: page.data.map((p) => ({
             id: p.id,
             text: p.text ?? "",
@@ -295,6 +323,7 @@ export const run = internalAction({
         const candidates: RemovalPage = await ctx.runQuery(
           internal.sync.removalCandidates,
           {
+            workspaceId: ctx.workspaceId,
             cutoff,
             cursor,
           },
@@ -304,6 +333,8 @@ export const run = internalAction({
         );
         if (missing.length)
           removed += await ctx.runMutation(internal.sync.removeMissing, {
+            workspaceId: ctx.workspaceId,
+            expectedToken: account.accessToken,
             posts: missing,
             cutoff,
           });
@@ -313,10 +344,12 @@ export const run = internalAction({
     } catch (error) {
       recordError("Post import", error);
     }
-    for (const post of await ctx.runQuery(internal.sync.metricTargets, {})) {
+    for (const post of await ctx.runQuery(internal.sync.metricTargets, {
+      workspaceId: ctx.workspaceId,
+    })) {
       try {
         const m = values(
-          await threads(
+          await scopedThreads(
             `${post.publishedIds[0]}/insights`,
             account.accessToken,
             { metric: "views,likes,replies,reposts,quotes,shares" },
@@ -324,6 +357,8 @@ export const run = internalAction({
         );
         if (
           await ctx.runMutation(internal.sync.saveMetrics, {
+            workspaceId: ctx.workspaceId,
+            expectedToken: account.accessToken,
             id: post._id,
             metrics: {
               views: m.get("views") ?? 0,
@@ -343,13 +378,15 @@ export const run = internalAction({
     }
     try {
       const m = values(
-        await threads(
+        await scopedThreads(
           `${account.threadsUserId}/threads_insights`,
           account.accessToken,
           { metric: "followers_count" },
         ),
       );
       await ctx.runMutation(internal.sync.saveFollowers, {
+        workspaceId: ctx.workspaceId,
+        expectedToken: account.accessToken,
         at: Date.now(),
         count: m.get("followers_count") ?? 0,
       });
@@ -359,7 +396,9 @@ export const run = internalAction({
         error,
       );
     }
-    const replySync = await ctx.runAction(internal.replies.sync, {});
+    const replySync = await ctx.runAction(internal.replies.sync, {
+      workspaceId: ctx.workspaceId,
+    });
     if (replySync.error) errors.add(replySync.error);
     return {
       imported,
@@ -371,10 +410,8 @@ export const run = internalAction({
   },
 });
 
-export const now = action(
-  withSecret(
-    {},
-    async (ctx: ActionCtx): Promise<SyncResult> =>
-      await ctx.runAction(internal.sync.run, {}),
-  ),
+export const now = ownerAction(
+  {},
+  async (ctx: ActionCtx): Promise<SyncResult> =>
+    await ctx.runAction(internal.sync.run, { workspaceId: ctx.workspaceId }),
 );

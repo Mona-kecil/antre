@@ -1,8 +1,8 @@
-import { convexTest } from "convex-test";
+import { workspaceTest, storeOwnedImage } from "#lib/server/testing.ts";
 import type { Doc } from "../../../convex/_generated/dataModel";
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
-import { storeTestImage } from "../../../convex/testing/storage";
+import { getFunctionName } from "convex/server";
 import { expect, test, vi } from "vitest";
 import {
   PROTOCOL_VERSION_META_KEY,
@@ -16,14 +16,12 @@ const bridge = vi.hoisted(() => ({
   action: vi.fn(),
 }));
 vi.mock("#lib/server/convex.ts", () => ({
-  convex: () => ({ client: bridge, secret: "test-secret" }),
+  agentConvex: (token: string) => ({ client: bridge, secret: token }),
 }));
 const modules = import.meta.glob([
   "../../../convex/**/*.ts",
   "!../../../convex/**/*.test.ts",
 ]);
-
-vi.mock("$app/env/private", () => ({ MCP_TOKEN: "test-mcp-token" }));
 
 async function invokeTool(name: string, args: unknown) {
   const response = await POST({
@@ -35,7 +33,7 @@ async function invokeTool(name: string, args: unknown) {
         "Mcp-Name": name,
         Accept: "application/json, text/event-stream",
         "MCP-Protocol-Version": "2026-07-28",
-        Authorization: "Bearer test-mcp-token",
+        Authorization: "Bearer test-secret",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -60,8 +58,7 @@ async function invokeTool(name: string, args: unknown) {
 }
 
 test("MCP uploads base64 to Convex storage, attaches the image, and rejects invalid inputs before upload", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const png =
@@ -77,7 +74,7 @@ test("MCP uploads base64 to Convex storage, attaches the image, and rejects inva
     );
     const image = init.body;
     return Response.json({
-      storageId: await t.run((ctx) => storeTestImage(ctx, image)),
+      storageId: await t.run((ctx) => storeOwnedImage(ctx, workspaceId, image)),
     });
   });
   vi.stubGlobal("fetch", upload);
@@ -142,8 +139,7 @@ test("MCP uploads base64 to Convex storage, attaches the image, and rejects inva
 });
 
 test("MCP creates, changes, batches and clears public topic tags independently of taxonomy", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   try {
@@ -159,9 +155,9 @@ test("MCP creates, changes, batches and clears public topic tags independently o
       return JSON.parse(response.result.content[0].text)[0];
     };
     expect(await read()).toMatchObject({
-      topicTag: "Marketing",
       meta: { topic: "T15" },
     });
+    expect((await read()).topicTag).toBeUndefined();
     const edited = await invokeTool("update_draft", {
       id,
       topicTag: "  Ecommerce  ",
@@ -221,7 +217,10 @@ test("MCP creates, changes, batches and clears public topic tags independently o
   }
 });
 
-test("MCP rejects missing or wrong bearer tokens, then initializes and lists annotated board, schedule and lookup tools", async () => {
+test("MCP rejects missing, invalid and revoked scoped bearer tokens, then initializes and lists annotated board, schedule and lookup tools", async () => {
+  const { t, store } = await workspaceTest(modules);
+  bridge.query.mockImplementation(store.query);
+  bridge.mutation.mockImplementation(store.mutation);
   const call = (method: string, token?: string) =>
     POST({
       request: new Request("https://antre.example/mcp", {
@@ -259,10 +258,10 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
     } as Parameters<typeof POST>[0]);
   expect((await call("tools/list")).status).toBe(401);
   expect((await call("tools/list", "wrong")).status).toBe(401);
-  const init = await call("initialize", "test-mcp-token");
+  const init = await call("initialize", "test-secret");
   expect(init.status).toBe(200);
   expect(await init.text()).toContain("antre");
-  const list = await call("tools/list", "test-mcp-token");
+  const list = await call("tools/list", "test-secret");
   expect(list.status).toBe(200);
   const text = await list.text();
   const body = JSON.parse(
@@ -387,16 +386,21 @@ test("MCP rejects missing or wrong bearer tokens, then initializes and lists ann
     "notes",
   ]);
   expect(createLinkedin.inputSchema.additionalProperties).toBe(false);
+  const grants = await t.query(api.workspaces.listAgentGrants, {});
+  const grant = grants.find((grant) => grant.label === "Test agent");
+  if (!grant) throw new Error("Expected a scoped agent grant");
+  await t.mutation(api.workspaces.revokeAgentGrant, { id: grant._id });
+  expect((await call("tools/list", "test-secret")).status).toBe(401);
 });
 
 test("MCP tags and searches published posts through Convex", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   try {
     const id = await t.run((ctx) =>
       ctx.db.insert("posts", {
+        workspaceId,
         parts: [{ text: "Creative library post" }],
         publishedIds: ["live"],
         source: "threads",
@@ -443,6 +447,7 @@ test("MCP tags and searches published posts through Convex", async () => {
     ]);
     await t.run(async (ctx) => {
       await ctx.db.insert("account", {
+        workspaceId,
         threadsUserId: "owner",
         username: "owner",
         accessToken: "test-token",
@@ -451,6 +456,7 @@ test("MCP tags and searches published posts through Convex", async () => {
         repliesSyncedAt: Date.parse("2026-10-18T01:00:00Z"),
       });
       await ctx.db.insert("replies", {
+        workspaceId,
         threadsId: "reader-reply",
         postId: id,
         text: "Reader question",
@@ -523,10 +529,9 @@ test("MCP tags and searches published posts through Convex", async () => {
 });
 
 test("MCP reschedule, swap, and settings operate on the same Convex queue", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-18T22:45:00Z"));
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const secret = "test-secret";
@@ -606,14 +611,11 @@ test("MCP reschedule, swap, and settings operate on the same Convex queue", asyn
 });
 
 test("MCP schedule excludes past and occupied slots, keeps held and failed slots free, and bounds history reads across WIB days", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
   vi.spyOn(Date, "now").mockReturnValue(
     Date.parse("2026-10-19T06:15:00+07:00"),
   );
-  const t = convexTest({
-    schema,
-    modules,
-    transactionLimits: { documentsRead: 40 },
+  const { t, workspaceId } = await workspaceTest(modules, {
+    documentsRead: 40,
   });
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
@@ -636,7 +638,11 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
       gapPolicy: "keepTimes",
     });
     const imageId = await t.run((ctx) =>
-      storeTestImage(ctx, new Blob(["png"], { type: "image/png" })),
+      storeOwnedImage(
+        ctx,
+        workspaceId,
+        new Blob(["png"], { type: "image/png" }),
+      ),
     );
     const queued = await t.mutation(api.posts.createDraft, {
       secret,
@@ -647,6 +653,7 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
     await t.mutation(api.posts.queue, { secret, id: queued, at: at("06:30") });
     await t.run(async (ctx) => {
       await ctx.db.insert("account", {
+        workspaceId,
         threadsUserId: "owner",
         username: "owner",
         accessToken: "never-return-this-token",
@@ -656,12 +663,14 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
       // Either an unbounded draft or history read exceeds the query's budget.
       for (let i = 0; i < 60; i++) {
         await ctx.db.insert("posts", {
+          workspaceId,
           source: "web",
           parts: [{ text: "Unrelated draft" }],
           publishedIds: [],
           status: { kind: "draft" },
         });
         await ctx.db.insert("posts", {
+          workspaceId,
           source: "threads",
           parts: [{ text: "Old history" }],
           publishedIds: [],
@@ -693,6 +702,7 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
         },
       ] satisfies Doc<"posts">["status"][]) {
         await ctx.db.insert("posts", {
+          workspaceId,
           source: "web",
           parts: [{ text: status.kind }],
           publishedIds: [],
@@ -750,7 +760,9 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
       ),
     });
     expect(
-      bridge.query.mock.calls.every(([, args]) => args.day === undefined),
+      bridge.query.mock.calls
+        .filter(([ref]) => getFunctionName(ref) === "posts:schedule")
+        .every(([, args]) => args.day === undefined),
     ).toBe(true);
     for (const args of [
       { days: 0 },
@@ -767,8 +779,7 @@ test("MCP schedule excludes past and occupied slots, keeps held and failed slots
 });
 
 test("MCP board paging preserves counts, facets, previews and validation, while id lookup preserves order and missing posts", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const secret = "test-secret";
@@ -779,7 +790,11 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
   };
   try {
     const imageId = await t.run((ctx) =>
-      storeTestImage(ctx, new Blob(["png"], { type: "image/png" })),
+      storeOwnedImage(
+        ctx,
+        workspaceId,
+        new Blob(["png"], { type: "image/png" }),
+      ),
     );
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
@@ -797,6 +812,7 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
     await t.mutation(api.posts.deletePost, { secret, id: missing });
     const published = await t.run((ctx) =>
       ctx.db.insert("posts", {
+        workspaceId,
         source: "threads",
         parts: [{ text: "Published", imageId }],
         publishedIds: ["live"],
@@ -898,10 +914,9 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
 });
 
 test("LinkedIn MCP drafts, labels, queue and settings use the separate Convex board", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-19T05:45:00+07:00"));
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const secret = "test-secret";
@@ -911,13 +926,16 @@ test("LinkedIn MCP drafts, labels, queue and settings use the separate Convex bo
     return JSON.parse(body.result.content[0].text);
   };
   try {
-    await t.mutation(api.linkedin.connect, {
-      secret,
-      memberId: "linkedin-member",
-      name: "LinkedIn Owner",
-      accessToken: "never-return-linkedin-token",
-      tokenExpiresAt: Date.now() + 86_400_000,
-    });
+    await t.run((ctx) =>
+      ctx.db.insert("linkedinAccount", {
+        workspaceId,
+        needsReconnect: false,
+        memberId: "linkedin-member",
+        name: "LinkedIn Owner",
+        accessToken: "never-return-linkedin-token",
+        tokenExpiresAt: Date.now() + 86_400_000,
+      }),
+    );
     const threads = await t.mutation(api.posts.createDraft, {
       secret,
       source: "web",
@@ -1088,11 +1106,10 @@ test("LinkedIn MCP drafts, labels, queue and settings use the separate Convex bo
 });
 
 test("LinkedIn MCP publishes through Convex and requires explicit consent to retry an unknown outcome", async () => {
-  vi.stubEnv("ANTRE_SECRET", "test-secret");
   vi.stubEnv("LINKEDIN_API_VERSION", "202608");
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-19T05:45:00+07:00"));
-  const t = convexTest(schema, modules);
+  const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
   const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
@@ -1109,13 +1126,16 @@ test("LinkedIn MCP publishes through Convex and requires explicit consent to ret
     return JSON.parse(body.result.content[0].text);
   };
   try {
-    await t.mutation(api.linkedin.connect, {
-      secret: "test-secret",
-      memberId: "member",
-      name: "Owner",
-      accessToken: "fake-token",
-      tokenExpiresAt: Date.now() + 86_400_000,
-    });
+    await t.run((ctx) =>
+      ctx.db.insert("linkedinAccount", {
+        workspaceId,
+        needsReconnect: false,
+        memberId: "member",
+        name: "Owner",
+        accessToken: "fake-token",
+        tokenExpiresAt: Date.now() + 86_400_000,
+      }),
+    );
     const first = await call("create_linkedin_draft", {
       text: "Approved LinkedIn post",
     });
@@ -1136,6 +1156,7 @@ test("LinkedIn MCP publishes through Convex and requires explicit consent to ret
     });
     const uncertain = await t.run((ctx) =>
       ctx.db.insert("linkedinPosts", {
+        workspaceId,
         text: "May already be live",
         source: "agent",
         status: {
@@ -1214,6 +1235,7 @@ test("LinkedIn MCP publishes through Convex and requires explicit consent to ret
     });
     const failed = await t.run((ctx) =>
       ctx.db.insert("linkedinPosts", {
+        workspaceId,
         text: "Rejected before publishing",
         source: "agent",
         status: { kind: "failed", at: Date.now(), error: "Rate limited" },

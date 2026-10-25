@@ -1,29 +1,35 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { isHttpError, isRedirect } from "@sveltejs/kit";
 import { api } from "../../../../convex/_generated/api";
-import { signSession } from "#lib/server/session.ts";
+import { getFunctionName } from "convex/server";
+import { workosOwner } from "#lib/server/testing.ts";
 import { GET as start } from "./+server";
 import { GET as callback } from "./callback/+server";
 
-const bridge = vi.hoisted(() => ({ query: vi.fn(), mutation: vi.fn() }));
+const bridge = vi.hoisted(() => ({ query: vi.fn(), action: vi.fn() }));
 vi.mock("$app/env/private", () => ({
   LINKEDIN_CLIENT_ID: "test-linkedin-app",
   LINKEDIN_CLIENT_SECRET: "test-linkedin-secret",
   LINKEDIN_REDIRECT_URI: "",
-  SESSION_SECRET: "test-session-secret",
 }));
 vi.mock("#lib/server/convex.ts", () => ({
-  convex: () => ({ client: bridge, secret: "test-secret" }),
+  convex: () => ({ client: bridge, secret: undefined }),
 }));
 
 beforeEach(() => {
-  bridge.query.mockResolvedValue({ threadsUserId: "owner" });
+  bridge.query.mockImplementation(async (ref) =>
+    getFunctionName(ref) === "workspaces:current"
+      ? { _id: "workspace_test", state: "active", timeZone: "Asia/Jakarta" }
+      : null,
+  );
 });
 afterEach(() => vi.resetAllMocks());
 
-function cookieJar(userId: string | null = "owner") {
+const sessions = new WeakMap<object, App.Locals>();
+function cookieJar(userId: string | null = workosOwner) {
   const jar = new Map<string, string>();
-  if (userId !== null) jar.set("antre_session", signSession(userId));
+  if (userId !== null)
+    jar.set("antre_session", `sealed-test-session-${userId}`);
   const cookies = {
     get: (name: string) => jar.get(name),
     set: vi.fn((name: string, value: string, _options: unknown) => {
@@ -31,6 +37,12 @@ function cookieJar(userId: string | null = "owner") {
     }),
     delete: vi.fn((name: string, _options: unknown) => jar.delete(name)),
   };
+  sessions.set(
+    cookies,
+    userId
+      ? { userId, sessionId: `session_${userId}`, accessToken: "workos-token" }
+      : {},
+  );
   return { jar, cookies };
 }
 
@@ -42,12 +54,21 @@ function callbackEvent(
   return {
     url: new URL(`https://antre.example/auth/linkedin/callback?${query}`),
     cookies,
+    locals: sessions.get(cookies),
     fetch,
   } as unknown as Parameters<typeof callback>[0];
 }
 
-function bindState(jar: Map<string, string>, ownerId = "owner") {
-  jar.set("linkedin_state", JSON.stringify({ state: "bound-state", ownerId }));
+function bindState(jar: Map<string, string>, userId = workosOwner) {
+  jar.set(
+    "linkedin_state",
+    JSON.stringify({
+      state: "bound-state",
+      userId,
+      sessionId: `session_${userId}`,
+      workspaceId: "workspace_test",
+    }),
+  );
 }
 
 async function outcome(work: () => unknown) {
@@ -62,17 +83,20 @@ test("LinkedIn connection starts only for the signed-in owner and binds state to
     start({
       url: new URL("https://antre.example/auth/linkedin"),
       cookies: unsigned.cookies,
+      locals: {},
     } as unknown as Parameters<typeof start>[0]),
   );
-  expect(isRedirect(unsignedResult) && unsignedResult.location).toBe("/login");
+  expect(isHttpError(unsignedResult) && unsignedResult.status).toBe(401);
   expect(bridge.query).not.toHaveBeenCalled();
   expect(unsigned.cookies.set).not.toHaveBeenCalled();
 
   const stranger = cookieJar("stranger");
+  bridge.query.mockResolvedValueOnce(null);
   const denied = await outcome(() =>
     start({
       url: new URL("https://antre.example/auth/linkedin"),
       cookies: stranger.cookies,
+      locals: sessions.get(stranger.cookies),
     } as unknown as Parameters<typeof start>[0]),
   );
   expect(isHttpError(denied) && denied.status).toBe(403);
@@ -84,6 +108,7 @@ test("LinkedIn connection starts only for the signed-in owner and binds state to
     start({
       url: new URL("https://antre.example/auth/linkedin"),
       cookies,
+      locals: sessions.get(cookies),
     } as unknown as Parameters<typeof start>[0]),
   );
   expect(isRedirect(result)).toBe(true);
@@ -95,8 +120,10 @@ test("LinkedIn connection starts only for the signed-in owner and binds state to
   );
   const state = JSON.parse(jar.get("linkedin_state") ?? "null");
   expect(state).toEqual({
-    ownerId: "owner",
-    state: expect.stringMatching(/^[a-f0-9]{64}$/),
+    userId: workosOwner,
+    sessionId: `session_${workosOwner}`,
+    workspaceId: "workspace_test",
+    state: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
   });
   expect(Object.fromEntries(target.searchParams)).toEqual({
     client_id: "test-linkedin-app",
@@ -117,7 +144,7 @@ test("LinkedIn connection starts only for the signed-in owner and binds state to
     },
   );
   expect(jar.get("antre_session")).toBe(session);
-  expect(bridge.mutation).not.toHaveBeenCalled();
+  expect(bridge.action).not.toHaveBeenCalled();
 });
 
 test.each(["missing", "malformed", "wrong-state", "other-session", "unsigned"])(
@@ -128,7 +155,7 @@ test.each(["missing", "malformed", "wrong-state", "other-session", "unsigned"])(
         ? null
         : kind === "other-session"
           ? "stranger"
-          : "owner",
+          : workosOwner,
     );
     if (kind !== "missing") bindState(jar);
     if (kind === "malformed") jar.set("linkedin_state", "invalid JSON");
@@ -145,24 +172,22 @@ test.each(["missing", "malformed", "wrong-state", "other-session", "unsigned"])(
       path: "/auth/linkedin/callback",
     });
     expect(bridge.query).not.toHaveBeenCalled();
-    expect(bridge.mutation).not.toHaveBeenCalled();
+    expect(bridge.action).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     expect(cookies.set).not.toHaveBeenCalled();
   },
 );
 
 test("LinkedIn callback checks the current owner before token exchange", async () => {
-  bridge.query.mockResolvedValue({ threadsUserId: "new-owner" });
+  bridge.query.mockResolvedValue(null);
   const { jar, cookies } = cookieJar();
   bindState(jar);
   const fetch = vi.fn<typeof globalThis.fetch>();
   const result = await outcome(() => callback(callbackEvent(cookies, fetch)));
   expect(isHttpError(result) && result.status).toBe(403);
-  expect(bridge.query).toHaveBeenCalledWith(api.account.current, {
-    secret: "test-secret",
-  });
+  expect(bridge.query).toHaveBeenCalledWith(api.workspaces.current, {});
   expect(fetch).not.toHaveBeenCalled();
-  expect(bridge.mutation).not.toHaveBeenCalled();
+  expect(bridge.action).not.toHaveBeenCalled();
   expect(jar.has("linkedin_state")).toBe(false);
 });
 
@@ -188,7 +213,7 @@ test.each(["openid profile w_member_social", undefined])(
     const before = Date.now();
     const result = await outcome(() => callback(event));
     expect(isRedirect(result) && result.location).toBe(
-      "/linkedin/settings?connection=connected",
+      "/app/linkedin/settings?connection=connected",
     );
     expect(fetch).toHaveBeenCalledTimes(2);
     const [tokenUrl, tokenInit] = fetch.mock.calls[0];
@@ -207,15 +232,15 @@ test.each(["openid profile w_member_social", undefined])(
     expect(
       new Headers(fetch.mock.calls[1][1]?.headers).get("authorization"),
     ).toBe("Bearer test-linkedin-token");
-    expect(bridge.mutation).toHaveBeenCalledWith(api.linkedin.connect, {
-      secret: "test-secret",
+    expect(bridge.action).toHaveBeenCalledWith(api.linkedin.connect, {
+      secret: undefined,
       memberId: "member-id",
       name: "Member Name",
       accessToken: "test-linkedin-token",
       tokenExpiresAt: expect.any(Number),
     });
     expect(
-      bridge.mutation.mock.calls[0][1].tokenExpiresAt,
+      bridge.action.mock.calls[0][1].tokenExpiresAt,
     ).toBeGreaterThanOrEqual(before + 3600_000);
     expect(jar.get("antre_session")).toBe(session);
     expect(cookies.set).not.toHaveBeenCalled();
@@ -223,7 +248,7 @@ test.each(["openid profile w_member_social", undefined])(
     const reused = await outcome(() => callback(event));
     expect(isHttpError(reused) && reused.status).toBe(400);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(bridge.mutation).toHaveBeenCalledTimes(1);
+    expect(bridge.action).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -285,7 +310,7 @@ test.each([
     const result = await outcome(() => callback(callbackEvent(cookies, fetch)));
     expect(isHttpError(result) && result.status).toBe(502);
     expect(fetch).toHaveBeenCalledTimes(calls);
-    expect(bridge.mutation).not.toHaveBeenCalled();
+    expect(bridge.action).not.toHaveBeenCalled();
     expect(jar.has("linkedin_state")).toBe(false);
     expect(jar.get("antre_session")).toBe(session);
     expect(cookies.set).not.toHaveBeenCalled();
@@ -303,7 +328,7 @@ test("LinkedIn denial and missing authorization code leave credentials and owner
     ),
   );
   expect(isRedirect(denied) && denied.location).toBe(
-    "/linkedin/settings?connection=cancelled",
+    "/app/linkedin/settings?connection=cancelled",
   );
   bindState(jar);
   const missing = await outcome(() =>
@@ -311,7 +336,7 @@ test("LinkedIn denial and missing authorization code leave credentials and owner
   );
   expect(isHttpError(missing) && missing.status).toBe(400);
   expect(fetch).not.toHaveBeenCalled();
-  expect(bridge.mutation).not.toHaveBeenCalled();
+  expect(bridge.action).not.toHaveBeenCalled();
   expect(jar.get("antre_session")).toBe(session);
   expect(cookies.set).not.toHaveBeenCalled();
 });
@@ -320,7 +345,7 @@ test("LinkedIn account mismatch from Convex cannot rewrite the owner session", a
   const { jar, cookies } = cookieJar();
   const session = jar.get("antre_session");
   bindState(jar);
-  bridge.mutation.mockRejectedValueOnce(new Error("Another LinkedIn member"));
+  bridge.action.mockRejectedValueOnce(new Error("Another LinkedIn member"));
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockResolvedValueOnce(
@@ -331,7 +356,7 @@ test("LinkedIn account mismatch from Convex cannot rewrite the owner session", a
     );
   const result = await outcome(() => callback(callbackEvent(cookies, fetch)));
   expect(isHttpError(result) && result.status).toBe(403);
-  expect(bridge.mutation).toHaveBeenCalledTimes(1);
+  expect(bridge.action).toHaveBeenCalledTimes(1);
   expect(jar.has("linkedin_state")).toBe(false);
   expect(jar.get("antre_session")).toBe(session);
   expect(cookies.set).not.toHaveBeenCalled();

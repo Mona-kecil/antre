@@ -1,12 +1,13 @@
-import { patchPost, postsByKind } from "./lib/postStore";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { hold, releaseHeld, startPublishing } from "./lib/scheduling";
 import {
   internalAction,
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { activeWorkspace, connectionActive, workspaceContext } from "./access";
+import { patchPost } from "./lib/postStore";
+import { hold, releaseHeld, startPublishing } from "./lib/scheduling";
 
 class ThreadsError extends Error {
   constructor(
@@ -91,11 +92,14 @@ export async function publishContainer({
   threadsUserId,
   accessToken,
   params,
+  beforeDispatch = async () => {},
 }: {
   threadsUserId: string;
   accessToken: string;
   params: Record<string, string>;
+  beforeDispatch?: () => Promise<void>;
 }): Promise<string> {
+  await beforeDispatch();
   const container = await threads(
     `${threadsUserId}/threads`,
     accessToken,
@@ -108,6 +112,7 @@ export async function publishContainer({
   );
   const deadline = Date.now() + 30_000;
   while (true) {
+    await beforeDispatch();
     const result = await threads(containerId, accessToken, {
       fields: "status,error_message",
     });
@@ -131,6 +136,7 @@ export async function publishContainer({
       );
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
+  await beforeDispatch();
   const published = await threads(
     `${threadsUserId}/threads_publish`,
     accessToken,
@@ -149,8 +155,16 @@ export const getPost = internalQuery({
 });
 
 export const getAccount = internalQuery({
-  args: {},
-  handler: async (ctx) => await ctx.db.query("account").unique(),
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, { workspaceId }) => {
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+      return null;
+    return ctx.db
+      .query("account")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .unique();
+  },
 });
 
 export const recordId = internalMutation({
@@ -200,6 +214,14 @@ export const complete = internalMutation({
       post.status.retryAt !== undefined
     )
       return;
+    const workspace = post.workspaceId && (await ctx.db.get(post.workspaceId));
+    if (!workspace) return;
+    if (workspace.state === "deleting" && result.kind === "failed") {
+      await ctx.db.patch(id, {
+        status: { kind: "failed", at: post.status.at, error: result.error },
+      });
+      return;
+    }
     const at = post.status.at;
     if (result.kind === "published") {
       await patchPost(ctx, id, {
@@ -208,21 +230,31 @@ export const complete = internalMutation({
       return;
     }
     if (result.needsReconnect) {
-      const account = await ctx.db.query("account").unique();
+      const account = await ctx.db
+        .query("account")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", post.workspaceId))
+        .unique();
       if (
         account &&
         (accessToken === undefined || account.accessToken === accessToken)
       )
         await ctx.db.patch(account._id, { needsReconnect: true });
-      await hold(ctx, post, result.error);
+      await hold(
+        await workspaceContext(ctx, post.workspaceId),
+        post,
+        result.error,
+      );
       // An OAuth reconnect may have completed while this request was in flight.
-      const current = await ctx.db.query("account").unique();
+      const current = await ctx.db
+        .query("account")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", post.workspaceId))
+        .unique();
       if (
         current &&
         !current.needsReconnect &&
         current.tokenExpiresAt > Date.now()
       )
-        await releaseHeld(ctx);
+        await releaseHeld(await workspaceContext(ctx, post.workspaceId));
       return;
     }
     const attempt = post.status.attempt ?? 0;
@@ -256,7 +288,10 @@ export const publish = internalAction({
       post.status.retryAt !== undefined
     )
       return;
-    const account = await ctx.runQuery(internal.publishing.getAccount, {});
+    if (!post.workspaceId) return;
+    const account = await ctx.runQuery(internal.publishing.getAccount, {
+      workspaceId: post.workspaceId,
+    });
     try {
       if (
         !account ||
@@ -265,6 +300,19 @@ export const publish = internalAction({
       ) {
         throw new ThreadsError("Threads account needs reconnecting", 190);
       }
+      const beforeDispatch = async () => {
+        const allowed = await ctx.runQuery(internal.publishing.canDispatch, {
+          id,
+          startedAt,
+          expectedToken: account.accessToken,
+        });
+        if (!allowed)
+          throw new ThreadsError("Threads account needs reconnecting", 190);
+      };
+      const scopedThreads = async (...args: Parameters<typeof threads>) => {
+        await beforeDispatch();
+        return threads(...args);
+      };
       const publishedIds = [...post.publishedIds];
       for (
         let index = publishedIds.length;
@@ -276,7 +324,7 @@ export const publish = internalAction({
         let threadsId: string | undefined;
         if (retry) {
           // Replies have their own feed; the user's threads feed only covers root posts.
-          const recent = await threads(
+          const recent = await scopedThreads(
             previousId ? "me/replies" : `${account.threadsUserId}/threads`,
             account.accessToken,
             {
@@ -322,7 +370,10 @@ export const publish = internalAction({
           if (index === 0 && post.topicTag) params.topic_tag = post.topicTag;
           if (previousId) params.reply_to_id = previousId;
           if (part.imageId) {
-            const url = await ctx.storage.getUrl(part.imageId);
+            const url = await ctx.runQuery(internal.publishing.imageUrl, {
+              id,
+              imageId: part.imageId,
+            });
             if (!url) throw new Error("Post image is missing from storage");
             params.image_url = url;
           }
@@ -330,6 +381,7 @@ export const publish = internalAction({
             threadsUserId: account.threadsUserId,
             accessToken: account.accessToken,
             params,
+            beforeDispatch,
           });
         }
         if (
@@ -345,7 +397,7 @@ export const publish = internalAction({
       }
       const firstId = publishedIds[0];
       if (!firstId) throw new Error("Post has no published parts");
-      const first = await threads(firstId, account.accessToken, {
+      const first = await scopedThreads(firstId, account.accessToken, {
         fields: "permalink",
       });
       await ctx.runMutation(internal.publishing.complete, {
@@ -369,6 +421,13 @@ export const publish = internalAction({
         (!account ||
           account.needsReconnect ||
           account.tokenExpiresAt <= Date.now());
+      if (tokenError && account && !needsReconnect) {
+        needsReconnect = !(await ctx.runQuery(internal.publishing.canDispatch, {
+          id,
+          startedAt,
+          expectedToken: account.accessToken,
+        }));
+      }
       if (tokenError && account && !needsReconnect) {
         try {
           await threads("me", account.accessToken, { fields: "id" });
@@ -400,6 +459,7 @@ export const publish = internalAction({
 
 export const saveToken = internalMutation({
   args: {
+    workspaceId: v.id("workspaces"),
     expectedToken: v.string(),
     token: v.optional(
       v.object({ accessToken: v.string(), tokenExpiresAt: v.number() }),
@@ -407,8 +467,17 @@ export const saveToken = internalMutation({
     error: v.optional(v.string()),
     invalid: v.optional(v.boolean()),
   },
-  handler: async (ctx, { expectedToken, token, error, invalid }) => {
-    const account = await ctx.db.query("account").unique();
+  handler: async (
+    ctx,
+    { workspaceId, expectedToken, token, error, invalid },
+  ) => {
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+      return;
+    const account = await ctx.db
+      .query("account")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .unique();
     if (!account || account.accessToken !== expectedToken) return;
     if (token) {
       await ctx.db.patch(account._id, {
@@ -417,7 +486,7 @@ export const saveToken = internalMutation({
         lastRefreshError: undefined,
         lastRefreshErrorAt: undefined,
       });
-      await releaseHeld(ctx);
+      await releaseHeld(await workspaceContext(ctx, workspaceId));
     } else {
       await ctx.db.patch(account._id, {
         needsReconnect:
@@ -432,10 +501,12 @@ export const saveToken = internalMutation({
 });
 
 export const refreshToken = internalAction({
-  args: {},
-  handler: async (ctx): Promise<void> => {
-    const account = await ctx.runQuery(internal.publishing.getAccount, {});
-    if (!account) return;
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, { workspaceId }): Promise<void> => {
+    const account = await ctx.runQuery(internal.publishing.getAccount, {
+      workspaceId,
+    });
+    if (!account || !account.accessToken) return;
     // Long-lived tokens last 60 days and cannot refresh during their first day.
     if (account.tokenExpiresAt - Date.now() > 59 * 86_400_000) return;
     try {
@@ -457,6 +528,7 @@ export const refreshToken = internalAction({
         throw new Error("Threads response is missing token expiry");
       }
       await ctx.runMutation(internal.publishing.saveToken, {
+        workspaceId,
         expectedToken: account.accessToken,
         token: {
           accessToken,
@@ -475,6 +547,7 @@ export const refreshToken = internalAction({
         }
       }
       await ctx.runMutation(internal.publishing.saveToken, {
+        workspaceId,
         expectedToken: account.accessToken,
         error: (error instanceof Error
           ? error.message
@@ -489,7 +562,14 @@ export const refreshToken = internalAction({
 export const sweepStuck = internalMutation({
   args: {},
   handler: async (ctx) => {
-    for (const post of await postsByKind(ctx, "publishing").collect()) {
+    for (const post of await ctx.db
+      .query("posts")
+      .withIndex("by_kind_at", (q) => q.eq("status.kind", "publishing"))
+      .collect()) {
+      const workspace =
+        post.workspaceId && (await ctx.db.get(post.workspaceId));
+      if (!workspace || workspace.state !== "active" || !workspace.ownerId)
+        continue;
       if (
         post.status.kind === "publishing" &&
         post.status.startedAt < Date.now() - 15 * 60_000
@@ -497,7 +577,13 @@ export const sweepStuck = internalMutation({
         if (post.status.retryAt !== undefined) continue;
         const attempt = post.status.attempt ?? 0;
         if (attempt < 3) {
-          await startPublishing(ctx, post, post.status.at, true, attempt + 1);
+          await startPublishing(
+            await workspaceContext(ctx, post.workspaceId),
+            post,
+            post.status.at,
+            true,
+            attempt + 1,
+          );
         } else {
           await patchPost(ctx, post._id, {
             status: {
@@ -509,5 +595,39 @@ export const sweepStuck = internalMutation({
         }
       }
     }
+  },
+});
+
+export const canDispatch = internalQuery({
+  args: { id: v.id("posts"), startedAt: v.number(), expectedToken: v.string() },
+  handler: async (ctx, { id, startedAt, expectedToken }) => {
+    const post = await ctx.db.get(id);
+    return (
+      !!post &&
+      post.status.kind === "publishing" &&
+      post.status.startedAt === startedAt &&
+      post.status.retryAt === undefined &&
+      !!(await connectionActive(ctx, post.workspaceId, expectedToken))
+    );
+  },
+});
+export const imageUrl = internalQuery({
+  args: { id: v.id("posts"), imageId: v.id("_storage") },
+  handler: async (ctx, { id, imageId }) => {
+    const post = await ctx.db.get(id);
+    if (
+      !post ||
+      !post.workspaceId ||
+      !post.parts.some((part) => part.imageId === imageId)
+    )
+      throw new Error("Image not found");
+    await activeWorkspace(ctx, post.workspaceId);
+    const asset = await ctx.db
+      .query("assets")
+      .withIndex("by_storageId", (q) => q.eq("storageId", imageId))
+      .unique();
+    if (!asset || asset.workspaceId !== post.workspaceId)
+      throw new Error("Image not found");
+    return ctx.storage.getUrl(imageId);
   },
 });

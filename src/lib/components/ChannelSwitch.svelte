@@ -1,26 +1,26 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	const linkedin = $derived(page.url.pathname.startsWith('/linkedin'));
+	const linkedin = $derived(page.url.pathname.startsWith('/app/linkedin'));
 	const section = $derived(
 		page.url.pathname.endsWith('/settings')
 			? 'settings'
-			: page.url.pathname === '/schedule' ||
+			: page.url.pathname === '/app/schedule' ||
 				  page.url.searchParams.get('view') === 'scheduled'
 				? 'schedule'
-				: page.url.pathname === '/library' ||
+				: page.url.pathname === '/app/library' ||
 					  page.url.searchParams.get('view') === 'published'
 					? 'library'
 					: 'drafts'
 	);
-	const threadsHref = $derived(section === 'drafts' ? '/' : `/${section}`);
+	const threadsHref = $derived(section === 'drafts' ? '/app' : `/app/${section}`);
 	const linkedinHref = $derived(
 		section === 'settings'
-			? '/linkedin/settings'
+			? '/app/linkedin/settings'
 			: section === 'schedule'
-				? '/linkedin?view=scheduled'
+				? '/app/linkedin?view=scheduled'
 				: section === 'library'
-					? '/linkedin?view=published'
-					: '/linkedin'
+					? '/app/linkedin?view=published'
+					: '/app/linkedin'
 	);
 </script>
 

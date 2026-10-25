@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { act } from '#lib/toast.svelte.ts';
-	import { clock, localInput, when } from '#lib/time.ts';
+	import { clock, localInput, when, timeZone } from '#lib/displayTime.svelte.ts';
 	import Icon from './Icon.svelte';
 	import Sheet from './Sheet.svelte';
 
@@ -56,7 +56,7 @@
 		<form method="POST" action="?/post" use:enhance={done} class="pick">
 			<input type="hidden" name="id" value={id} />
 			<input type="hidden" name="operation" value={operation} />
-			<label class="label" for="when-{id}">Pick a time <span class="muted">· WIB</span></label>
+			<label class="label" for="when-{id}">Pick a time <span class="muted">· {timeZone()}</span></label>
 			<input
 				id="when-{id}"
 				class="field"

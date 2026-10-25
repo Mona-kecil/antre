@@ -1,27 +1,19 @@
-import { randomBytes } from "node:crypto";
 import * as env from "$app/env/private";
 import { error, redirect } from "@sveltejs/kit";
 import { owner } from "#lib/server/owner.ts";
-import { readSession } from "#lib/server/session.ts";
+import { startConnection } from "#lib/server/oauth.ts";
 import type { RequestHandler } from "./$types";
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
-  const session = readSession(cookies.get("antre_session"));
-  if (!session) redirect(303, "/login");
-  await owner(session.userId);
+export const GET: RequestHandler = async ({ url, cookies, locals }) => {
+  const { workspace } = await owner(locals.userId);
   if (!env.LINKEDIN_CLIENT_ID || !env.LINKEDIN_CLIENT_SECRET)
     error(503, "LinkedIn connection is not configured");
-  const state = randomBytes(32).toString("hex");
-  cookies.set(
-    "linkedin_state",
-    JSON.stringify({ state, ownerId: session.userId }),
-    {
-      path: "/auth/linkedin/callback",
-      httpOnly: true,
-      secure: url.protocol === "https:",
-      sameSite: "lax",
-      maxAge: 600,
-    },
+  const state = startConnection(
+    cookies,
+    url,
+    locals,
+    workspace._id,
+    "linkedin",
   );
   const target = new URL("https://www.linkedin.com/oauth/v2/authorization");
   target.search = new URLSearchParams({

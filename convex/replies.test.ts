@@ -1,14 +1,14 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import schema from "./schema";
+import {
+  fixtureWorkspace,
+  ownerTest,
+  workspaceIdOf,
+} from "./testing/workspace.test-support";
 
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
 const now = Date.parse("2026-10-18T04:00:00Z");
 
 beforeEach(() => {
-  vi.stubEnv("ANTRE_SECRET", secret);
   vi.spyOn(Date, "now").mockReturnValue(now);
 });
 afterEach(() => {
@@ -18,9 +18,10 @@ afterEach(() => {
 });
 
 test("syncs paginated conversations, lists unanswered replies, drafts and sends reviewed answers, and hides/unhides without duplicate rows", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const postId = await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "owner",
       username: "owner",
       accessToken: "test-token",
@@ -28,6 +29,7 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
       needsReconnect: false,
     });
     await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Old root" }],
       publishedIds: ["old"],
       source: "threads",
@@ -38,12 +40,14 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
       },
     });
     await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Draft" }],
       publishedIds: [],
       source: "agent",
       status: { kind: "draft" },
     });
     return ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Root text" }, { text: "Self-thread part" }],
       publishedIds: ["root", "self"],
       source: "agent",
@@ -177,7 +181,7 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
     }),
   );
 
-  expect(await t.query(api.replies.list, { secret })).toEqual({
+  expect(await t.query(api.replies.list, {})).toEqual({
     account: {
       threadsUserId: "owner",
       username: "owner",
@@ -193,14 +197,14 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   await expect(t.query(api.replies.list, { secret: "wrong" })).rejects.toThrow(
     "Unauthorized",
   );
-  expect(await t.action(api.sync.now, { secret })).toEqual({
+  expect(await t.action(api.sync.now, {})).toEqual({
     imported: 0,
     removed: 0,
     metricsUpdated: 2,
     replies: 4,
     error: null,
   });
-  const list = await t.query(api.replies.list, { secret });
+  const list = await t.query(api.replies.list, {});
   expect(list.syncedAt).toBe(new Date(now).toISOString());
   expect(list.total).toBe(2);
   expect(list.replies).toEqual([
@@ -232,32 +236,31 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
     },
   ]);
   expect(
-    (await t.query(api.replies.list, { secret, postId, limit: 1 })).replies.map(
+    (await t.query(api.replies.list, { postId, limit: 1 })).replies.map(
       (r) => r.replyId,
     ),
   ).toEqual(["bob"]);
   const secondPage = await t.query(api.replies.list, {
-    secret,
     postId,
     offset: 1,
     limit: 1,
   });
   expect(secondPage.total).toBe(2);
   expect(secondPage.replies.map((reply) => reply.replyId)).toEqual(["alice"]);
-  expect(await t.query(api.replies.list, { secret, offset: 2 })).toMatchObject({
+  expect(await t.query(api.replies.list, { offset: 2 })).toMatchObject({
     total: 2,
     replies: [],
   });
   for (const offset of [-1, 0.5])
-    await expect(t.query(api.replies.list, { secret, offset })).rejects.toThrow(
+    await expect(t.query(api.replies.list, { offset })).rejects.toThrow(
       "Offset",
     );
   expect(
-    (await t.query(api.replies.list, { secret, unanswered: false })).replies,
+    (await t.query(api.replies.list, { unanswered: false })).replies,
   ).toHaveLength(4);
   for (const text of [" ", "x".repeat(501)])
     await expect(
-      t.mutation(api.replies.saveDraft, { secret, replyId: "alice", text }),
+      t.mutation(api.replies.saveDraft, { replyId: "alice", text }),
     ).rejects.toThrow("1–500");
   await expect(
     t.mutation(api.replies.saveDraft, {
@@ -270,7 +273,6 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   const callsBeforeDraft = calls.length;
   await expect(
     t.action(api.replies.sendDraft, {
-      secret,
       replyId: "alice",
       text: replyText,
     }),
@@ -281,36 +283,37 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
     ["self", "own reply"],
   ])
     await expect(
-      t.mutation(api.replies.saveDraft, { secret, replyId, text: "Draft" }),
+      t.mutation(api.replies.saveDraft, { replyId, text: "Draft" }),
     ).rejects.toThrow(error);
   await t.mutation(api.replies.saveDraft, {
-    secret,
     replyId: "alice",
     text: replyText,
   });
-  await t.mutation(api.replies.discardDraft, { secret, replyId: "alice" });
-  expect(
-    (await t.query(api.replies.list, { secret, drafted: true })).replies,
-  ).toEqual([]);
+  await t.mutation(api.replies.discardDraft, { replyId: "alice" });
+  expect((await t.query(api.replies.list, { drafted: true })).replies).toEqual(
+    [],
+  );
   // Keep whitespace and Unicode intact through storage and publication.
   replyText = "  Thanks Alice 👋\nReviewed answer  ";
   await t.mutation(api.replies.saveDraft, {
-    secret,
     replyId: "alice",
     text: replyText,
   });
   // This must catch any Threads request from saving or discarding a draft.
   expect(calls).toHaveLength(callsBeforeDraft);
-  expect(await t.action(internal.replies.sync, {})).toEqual({
+  expect(
+    await t.action(internal.replies.sync, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toEqual({
     replies: 4,
     error: null,
   });
   expect(
-    (await t.query(api.replies.list, { secret, drafted: true })).replies,
+    (await t.query(api.replies.list, { drafted: true })).replies,
   ).toMatchObject([{ replyId: "alice", draft: replyText }]);
   expect(
     await t.action(api.replies.sendDraft, {
-      secret,
       replyId: "alice",
       text: replyText,
     }),
@@ -318,7 +321,6 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   expect(
     (
       await t.query(api.replies.list, {
-        secret,
         drafted: true,
         unanswered: false,
       })
@@ -327,7 +329,6 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   const callsAfterSend = calls.length;
   await expect(
     t.action(api.replies.sendDraft, {
-      secret,
       replyId: "alice",
       text: replyText,
     }),
@@ -335,10 +336,10 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   expect(calls).toHaveLength(callsAfterSend);
   // This assertion must fail if the mine-replied exclusion is removed.
   expect(
-    (await t.query(api.replies.list, { secret })).replies.map((r) => r.replyId),
+    (await t.query(api.replies.list, {})).replies.map((r) => r.replyId),
   ).toEqual(["bob"]);
   expect(
-    await t.run((ctx) =>
+    await t.run(async (ctx) =>
       ctx.db
         .query("replies")
         .withIndex("by_threadsId", (q) => q.eq("threadsId", "answer"))
@@ -362,30 +363,34 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
     "POST owner/threads_publish",
   ]);
   expect(
-    await t.action(api.replies.hide, { secret, replyId: "bob", hide: true }),
+    await t.action(api.replies.hide, { replyId: "bob", hide: true }),
   ).toEqual({ hidden: true });
   expect(hidden).toBe(true);
-  expect((await t.query(api.replies.list, { secret })).replies).toEqual([]);
+  expect((await t.query(api.replies.list, {})).replies).toEqual([]);
   expect(
-    (
-      await t.query(api.replies.list, { secret, unanswered: false })
-    ).replies.find((r) => r.replyId === "bob")?.hidden,
+    (await t.query(api.replies.list, { unanswered: false })).replies.find(
+      (r) => r.replyId === "bob",
+    )?.hidden,
   ).toBe(true);
-  expect(await t.action(internal.replies.sync, {})).toEqual({
+  expect(
+    await t.action(internal.replies.sync, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toEqual({
     replies: 5,
     error: null,
   });
-  expect(await t.run((ctx) => ctx.db.query("replies").collect())).toHaveLength(
-    5,
-  );
-  // Missing hide_status must preserve a hide recorded by the action.
-  expect((await t.query(api.replies.list, { secret })).replies).toEqual([]);
   expect(
-    await t.action(api.replies.hide, { secret, replyId: "bob", hide: false }),
+    await t.run(async (ctx) => ctx.db.query("replies").collect()),
+  ).toHaveLength(5);
+  // Missing hide_status must preserve a hide recorded by the action.
+  expect((await t.query(api.replies.list, {})).replies).toEqual([]);
+  expect(
+    await t.action(api.replies.hide, { replyId: "bob", hide: false }),
   ).toEqual({ hidden: false });
   expect(hidden).toBe(false);
   expect(
-    (await t.query(api.replies.list, { secret })).replies.map((r) => r.replyId),
+    (await t.query(api.replies.list, {})).replies.map((r) => r.replyId),
   ).toEqual(["bob"]);
 
   // A failed optional permalink lookup must still record the published answer.
@@ -395,27 +400,26 @@ test("syncs paginated conversations, lists unanswered replies, drafts and sends 
   replyText = "Thanks Bob";
   publishedId = "answer-bob";
   await t.mutation(api.replies.saveDraft, {
-    secret,
     replyId: "bob",
     text: replyText,
   });
   expect(
     await t.action(api.replies.sendDraft, {
-      secret,
       replyId: "bob",
       text: replyText,
     }),
   ).toEqual({ replyId: "answer-bob", permalink: null });
-  expect((await t.query(api.replies.list, { secret })).replies).toEqual([]);
-  expect(await t.run((ctx) => ctx.db.query("replies").collect())).toHaveLength(
-    6,
-  );
+  expect((await t.query(api.replies.list, {})).replies).toEqual([]);
+  expect(
+    await t.run(async (ctx) => ctx.db.query("replies").collect()),
+  ).toHaveLength(6);
 });
 
 test("reply sync keeps partial progress, collects redacted errors, and leaves the last complete sync timestamp unchanged", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "owner",
       username: "owner",
       accessToken: "test-token",
@@ -425,6 +429,7 @@ test("reply sync keeps partial progress, collects redacted errors, and leaves th
     });
     for (const id of ["bad", "good"])
       await ctx.db.insert("posts", {
+        workspaceId: await fixtureWorkspace(ctx),
         parts: [{ text: id }],
         publishedIds: [id],
         source: "threads",
@@ -452,12 +457,14 @@ test("reply sync keeps partial progress, collects redacted errors, and leaves th
       });
     }),
   );
-  const result = await t.action(internal.replies.sync, {});
+  const result = await t.action(internal.replies.sync, {
+    workspaceId: await workspaceIdOf(t),
+  });
   expect(result.replies).toBe(2);
   expect(result.error).toContain("Permission denied [redacted]");
   expect(result.error).toContain("Threads repeated a pagination cursor");
   expect(result.error).not.toContain("test-token");
-  const list = await t.query(api.replies.list, { secret });
+  const list = await t.query(api.replies.list, {});
   expect(list.syncedAt).toBe(new Date(now - 3_600_000).toISOString());
   expect(list.replies).toHaveLength(1);
   expect(list.replies[0]).toMatchObject({
@@ -469,9 +476,10 @@ test("reply sync keeps partial progress, collects redacted errors, and leaves th
 });
 
 async function replyWithDraft() {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "owner",
       username: "owner",
       accessToken: "test-token",
@@ -479,6 +487,7 @@ async function replyWithDraft() {
       needsReconnect: false,
     });
     const postId = await ctx.db.insert("posts", {
+      workspaceId: await fixtureWorkspace(ctx),
       parts: [{ text: "Root" }],
       publishedIds: ["root"],
       source: "threads",
@@ -489,6 +498,7 @@ async function replyWithDraft() {
       },
     });
     await ctx.db.insert("replies", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsId: "reader",
       postId,
       text: "Question",
@@ -499,7 +509,6 @@ async function replyWithDraft() {
     });
   });
   await t.mutation(api.replies.saveDraft, {
-    secret,
     replyId: "reader",
     text: "Reviewed answer",
   });
@@ -508,10 +517,8 @@ async function replyWithDraft() {
 
 function replyResponse(input: URL) {
   const path = new URL(input).pathname;
-  if (path === "/v1.0/owner/threads")
-    return Response.json({ id: "container" });
-  if (path === "/v1.0/container")
-    return Response.json({ status: "FINISHED" });
+  if (path === "/v1.0/owner/threads") return Response.json({ id: "container" });
+  if (path === "/v1.0/container") return Response.json({ status: "FINISHED" });
   if (path === "/v1.0/owner/threads_publish")
     return Response.json({ id: "sent" });
   if (path === "/v1.0/sent")
@@ -521,9 +528,8 @@ function replyResponse(input: URL) {
 
 test("rejects stale reviewed text without fetching Threads or changing the replacement draft", async () => {
   const t = await replyWithDraft();
-  const loaded = await t.query(api.replies.list, { secret, drafted: true });
+  const loaded = await t.query(api.replies.list, { drafted: true });
   await t.mutation(api.replies.saveDraft, {
-    secret,
     replyId: "reader",
     text: "Agent replacement",
   });
@@ -533,13 +539,15 @@ test("rejects stale reviewed text without fetching Threads or changing the repla
   if (text === null) throw new Error("Expected a saved draft");
   await expect(
     t.action(api.replies.sendDraft, {
-      secret,
       replyId: "reader",
       text,
     }),
   ).rejects.toThrow("Draft changed; review it again");
   expect(fetch).not.toHaveBeenCalled();
-  const target = await t.query(internal.replies.get, { replyId: "reader" });
+  const target = await t.query(internal.replies.get, {
+    workspaceId: await workspaceIdOf(t),
+    replyId: "reader",
+  });
   expect(target.draft).toBe("Agent replacement");
   expect(target.sending).toBeUndefined();
 });
@@ -568,7 +576,7 @@ test("overlapping sends publish exactly once and refuse draft edits while sendin
       return replyResponse(input);
     }),
   );
-  const args = { secret, replyId: "reader", text: "Reviewed answer" };
+  const args = { replyId: "reader", text: "Reviewed answer" };
   const first = Promise.allSettled([t.action(api.replies.sendDraft, args)]);
   await publishing;
   try {
@@ -576,8 +584,14 @@ test("overlapping sends publish exactly once and refuse draft edits while sendin
       t.action(api.replies.sendDraft, args),
     ]);
     expect(publishes).toBe(1);
-    expect(second).toMatchObject({ status: "rejected", reason: expect.any(Error) });
-    const target = await t.query(internal.replies.get, { replyId: "reader" });
+    expect(second).toMatchObject({
+      status: "rejected",
+      reason: expect.any(Error),
+    });
+    const target = await t.query(internal.replies.get, {
+      workspaceId: await workspaceIdOf(t),
+      replyId: "reader",
+    });
     expect(target.draft).toBeUndefined();
     expect(target.sending).toBe(args.text);
     await expect(
@@ -590,10 +604,15 @@ test("overlapping sends publish exactly once and refuse draft edits while sendin
   const [result] = await first;
   expect(publishes).toBe(1);
   expect(result.status).toBe("fulfilled");
-  const target = await t.query(internal.replies.get, { replyId: "reader" });
+  const target = await t.query(internal.replies.get, {
+    workspaceId: await workspaceIdOf(t),
+    replyId: "reader",
+  });
   expect(target.draft).toBeUndefined();
   expect(target.sending).toBeUndefined();
-  expect(await t.run((ctx) => ctx.db.query("replies").collect())).toHaveLength(2);
+  expect(
+    await t.run(async (ctx) => ctx.db.query("replies").collect()),
+  ).toHaveLength(2);
 });
 
 test("publish failure restores the claimed draft and clears the sending marker", async () => {
@@ -608,15 +627,19 @@ test("publish failure restores the claimed draft and clears the sending marker",
   );
   await expect(
     t.action(api.replies.sendDraft, {
-      secret,
       replyId: "reader",
       text: "Reviewed answer",
     }),
   ).rejects.toThrow("Publish failed [redacted]");
-  const target = await t.query(internal.replies.get, { replyId: "reader" });
+  const target = await t.query(internal.replies.get, {
+    workspaceId: await workspaceIdOf(t),
+    replyId: "reader",
+  });
   expect(target.draft).toBe("Reviewed answer");
   expect(target.sending).toBeUndefined();
-  expect(await t.run((ctx) => ctx.db.query("replies").collect())).toHaveLength(1);
+  expect(
+    await t.run(async (ctx) => ctx.db.query("replies").collect()),
+  ).toHaveLength(1);
 });
 
 test("discard unlocks only a send marker old enough to belong to a dead send", async () => {
@@ -633,24 +656,27 @@ test("discard unlocks only a send marker old enough to belong to a dead send", a
         sendingAt,
       });
     });
-  const args = { secret, replyId: "reader", text: "Retry" };
+  const args = { replyId: "reader", text: "Retry" };
   const drafted = () =>
-    t.query(api.replies.list, { secret, drafted: true, unanswered: false });
+    t.query(api.replies.list, { drafted: true, unanswered: false });
 
   await mark(Date.now() - 60_000);
   expect((await drafted()).replies[0]).toMatchObject({
     replyId: "reader",
     sending: "Reviewed answer",
   });
-  await t.mutation(api.replies.discardDraft, { secret, replyId: "reader" });
+  await t.mutation(api.replies.discardDraft, { replyId: "reader" });
   await expect(t.mutation(api.replies.saveDraft, args)).rejects.toThrow(
     "send is in progress",
   );
 
   await mark(Date.now() - 16 * 60_000);
-  await t.mutation(api.replies.discardDraft, { secret, replyId: "reader" });
+  await t.mutation(api.replies.discardDraft, { replyId: "reader" });
   await t.mutation(api.replies.saveDraft, args);
-  const target = await t.query(internal.replies.get, { replyId: "reader" });
+  const target = await t.query(internal.replies.get, {
+    workspaceId: await workspaceIdOf(t),
+    replyId: "reader",
+  });
   expect(target.sending).toBeUndefined();
   expect(target.sendingAt).toBeUndefined();
   expect(target.draft).toBe("Retry");

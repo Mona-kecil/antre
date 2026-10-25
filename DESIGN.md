@@ -1,20 +1,45 @@
 ---
 name: antre
-description: A phone-first review-and-plan console for one Threads account.
+description: A phone-first review and publishing console with private workspaces and a public demo.
 colors:
   paper: "#ffffff"
-  paper-dim: "#f3f3f3"
-  ink: "#000000"
-  ink-muted: "#6b6b6b"
-  ink-faint: "#a3a3a3"
+  paper-dim: "#efeeea"
+  canvas: "#f6f5f2"
+  ink: "#0f0f0d"
+  ink-muted: "#6b6a63"
+  ink-faint: "#a3a29b"
+  lime: "#e4f222"
+  night-lime: "#cad649"
   held-amber: "#a85d00"
   failed-red: "#c62828"
   published-green: "#1d7a3e"
   pinned-indigo: "#4f5bd5"
-  night: "#101010"
-  night-dim: "#1e1e1e"
-  night-ink: "#f3f5f7"
+  night: "#0e0e0c"
+  night-dim: "#262622"
+  night-canvas: "#1a1a17"
+  night-ink: "#f4f3ee"
 typography:
+  navigation-label:
+    fontSize: "10px"
+    fontWeight: 400
+  public-display-large:
+    fontSize: "60px"
+    fontWeight: 700
+  public-display:
+    fontSize: "48px"
+    fontWeight: 700
+  public-display-small:
+    fontSize: "40px"
+    fontWeight: 700
+  public-brand:
+    fontSize: "32px"
+    fontWeight: 750
+  public-section:
+    fontSize: "24px"
+    fontWeight: 700
+  section:
+    fontSize: "17px"
+    fontWeight: 700
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif"
     fontSize: "20px"
@@ -49,8 +74,8 @@ spacing:
   lg: "16px"
 components:
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
+    backgroundColor: "{colors.lime}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.pill}"
     padding: "0 16px"
     height: "36px"
@@ -73,8 +98,8 @@ components:
     padding: "0 12px"
     height: "36px"
   post-avatar:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
+    backgroundColor: "{colors.lime}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.pill}"
     size: "36px"
 ---
@@ -98,14 +123,16 @@ The schedule is bounded by days, not infinite. A week strip picks the day, and t
 
 ## Colors
 
-The palette is monochrome, and the only colour it carries is state.
+The palette is warm monochrome plus one accent, Lime. Lime marks you and your next step: the primary button, avatars and the selected day. Every other hue is state.
 
 ### Neutral
-- **Paper** (#ffffff) / **Night** (#101010): the page background in light and dark mode.
-- **Paper Dim** (#f3f3f3) / **Night Dim** (#1e1e1e): the search field, inputs, DayLine window tracks and the selected sort chip.
-- **Ink** (#000000) / **Night Ink** (#f3f5f7): body text, the primary button, avatars and the selected day pill.
-- **Ink Muted** (#6b6b6b): metadata, labels, counts and hints. This is the quietest colour allowed for readable text.
-- **Ink Faint** (#a3a3a3): separators, free-slot rings and icons only. Never use it for text.
+- **Paper** (#ffffff) / **Night** (#0e0e0c): the page background in light and dark mode.
+- **Canvas** (#f6f5f2) / **Night Canvas** (#1a1a17): the desktop sidebar and agenda columns around the paper page.
+- **Paper Dim** (#efeeea) / **Night Dim** (#262622): the search field, inputs, DayLine window tracks, empty grid cells and the selected sort chip.
+- **Ink** (#0f0f0d) / **Night Ink** (#f4f3ee): body text and icons.
+- **Lime** (#e4f222) / **Night Lime** (#cad649): the primary button, avatars, the selected day, with ink text on top. The focus ring uses olive (#7c8700) in light mode and Night Lime in dark mode.
+- **Ink Muted** (#6b6a63): metadata, labels, counts and hints. This is the quietest colour allowed for readable text.
+- **Ink Faint** (#a3a29b): separators, free-slot rings and icons only. Never use it for text.
 - **Hairlines**: `rgb(0 0 0 / 0.1)` divides rows; `rgb(0 0 0 / 0.18)` is for chip borders and the thread rail.
 
 ### Semantic
@@ -117,7 +144,7 @@ The palette is monochrome, and the only colour it carries is state.
 Topic dots take their colour from the taxonomy (`topicColor`), so they are content colours, not system colours.
 
 ### Named Rules
-**The State-Only Colour Rule.** Hue means state. A coloured element that is not held, failed, published, pinned or a topic dot is a bug.
+**The State-Only Colour Rule.** Hue means state. A coloured element that is not held, failed, published, pinned, a topic dot or Lime is a bug. Lime appears once per view as the primary action, plus avatars and the selected day.
 
 ## Typography
 
@@ -126,6 +153,8 @@ Topic dots take their colour from the taxonomy (`topicColor`), so they are conte
 **Character:** native and invisible. The post text should read exactly like Threads, so no display face competes with it.
 
 ### Hierarchy
+- **Public display** (700, 40–60px, -0.04em): the landing page's opening heading. The phone layout uses 48px, reducing to 40px below 360px. Private app and demo page titles keep the 20px title size.
+- **Public brand and section** (32px wordmark, 24px section headings): the wider landing page. They use the same system font and ink palette as the app.
 - **Title** (700, 20px/24px, -0.02em): top bar page titles.
 - **Section** (700, 17px): day summary ("Today"), sheet titles and settings section heads.
 - **Body** (400, 15px/1.4): post text, reply text and list rows.
@@ -137,7 +166,9 @@ Topic dots take their colour from the taxonomy (`topicColor`), so they are conte
 
 ## Layout
 
-The layout is a single column with `max-width: 600px`, centred, with side hairlines at ≥640px. It has a 52px sticky top bar (`--bar`) and a 56px bottom tab bar plus the safe-area inset (`--tabs`). The DayLine sticks directly under the top bar. Post rows have 12px/16px padding, use a 36px rail column with a 12px gap, and are separated by hairlines rather than cards. Spacing steps are 4, 8, 12 and 16. Lists page at 20 items, either server-side (Drafts, Library) or client-side for a single day (Schedule, Replies).
+Below 1100px the layout is a single column with `max-width: 600px`, centred, with side hairlines at ≥640px. It has a 52px sticky top bar (`--bar`) and a 56px bottom tab bar plus the safe-area inset (`--tabs`). The DayLine sticks directly under the top bar. Post rows have 12px/16px padding, use a 36px rail column with a 12px gap, and are separated by hairlines rather than cards. Spacing steps are 4, 8, 12 and 16. Lists page at 20 items, either server-side (Drafts, Library) or client-side for a single day (Schedule, Replies).
+
+At 1100px and wider the private app is three columns: a 248px sidebar, the page (paper, content capped at 680px) and a 320px agenda, with both side columns on Canvas and scrolling on their own. The sidebar holds the wordmark, channel switch, views with counts, New post, the week grid and the account. The agenda lists the selected day's slots. The top bar keeps the page title and actions but drops the channel switch, and the bottom tab bar is hidden. The Schedule page drops its week strip, summary and DayLine on desktop because the grid and agenda already show them. The composer opens as a 640px dialog over the shell; Escape cancels.
 
 ## Elevation & Depth
 
@@ -154,7 +185,7 @@ Interactive controls are fully round (999px pills). Filter chips use 8px corners
 
 ### Buttons
 - **Shape:** a pill (999px), 36px tall, or 44px for full-width sheet actions.
-- **Primary:** an ink fill with paper text, 15px/600. There is one primary per view.
+- **Primary:** a Lime fill with ink text, 15px/600. There is one primary per view.
 - **Secondary:** a 1px hairline border; the press tint (`rgb(0 0 0 / 0.05)`) on hover.
 - **Action row (`.act`):** a borderless 13px/500 icon-and-label button with no underline. It sits under each post: Queue, Schedule, Edit, More.
 - **Press:** `scale(0.97)` (0.95 for action-row buttons) over 160ms with `--ease` (`cubic-bezier(0.23, 1, 0.32, 1)`).
@@ -172,6 +203,9 @@ Interactive controls are fully round (999px pills). Filter chips use 8px corners
 
 ### Navigation
 - **Tab bar:** five slots (Drafts, Schedule, the centre compose "+" in a 10px-radius Paper Dim tile, Replies, Library). Labels are 10px; the active tab is ink and the others Ink Muted. The count badge is a 16px ink pill.
+- **Sidebar (desktop):** pill nav rows with an 18px icon and a right-aligned count; the current view sits on Paper Dim.
+- **Week grid (desktop):** seven day columns of 7px slot cells grouped by posting window, with hour labels at each window start. Cells are topic colour when queued, Ink Muted when published, red when failed, amber when held, Paper Dim when free and outlined for the next free slot. A red hairline marks now in today's column. The selected day's column takes a Lime tint. Hovering a cell shows "Day HH:MM · first line" or "· Free". A free cell opens the composer preset to that time.
+- **Agenda (desktop):** the selected day's slots as rows (time, then post chip or a dashed "Free" target), with a dashed divider between windows and a red now row.
 - **Bottom sheets:** a grab handle, a 17px title and a close button. Option rows are 48px tall. They hold filters, scheduling, swap, more actions and taxonomy pickers.
 
 ### DayLine (signature)

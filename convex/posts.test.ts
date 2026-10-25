@@ -1,15 +1,16 @@
-import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import schema from "./schema";
 import { MAX_IMAGE_BYTES } from "./lib/media";
 import { storeTestImage } from "./testing/storage";
-
-const modules = import.meta.glob(["./**/*.ts", "!./**/*.test.ts"]);
-const secret = "test-secret";
+import {
+  connectThreads,
+  fixtureWorkspace,
+  ownerTest,
+  workspaceIdOf,
+} from "./testing/workspace.test-support";
 
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const requests: {
     method: string;
     url: string;
@@ -192,6 +193,7 @@ async function setup() {
   );
   await t.run(async (ctx) => {
     await ctx.db.insert("account", {
+      workspaceId: await fixtureWorkspace(ctx),
       threadsUserId: "user",
       username: "owner",
       accessToken: "test-access-token",
@@ -208,8 +210,7 @@ async function setup() {
         await ctx.db.patch(account._id, { needsReconnect: true });
       }),
     reconnect: () =>
-      t.mutation(api.account.connect, {
-        secret,
+      connectThreads(t, {
         threadsUserId: "user",
         username: "owner",
         accessToken: "new-token",
@@ -238,7 +239,6 @@ async function setup() {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-18T04:45:00Z"));
-  vi.stubEnv("ANTRE_SECRET", secret);
 });
 
 afterEach(() => {
@@ -248,33 +248,32 @@ afterEach(() => {
 });
 
 test("validates stored images when creating and updating drafts and returns image previews", async () => {
-  const t = convexTest(schema, modules);
+  const t = await ownerTest();
   const png = Uint8Array.from(
     atob(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
     ),
     (character) => character.charCodeAt(0),
   );
-  const store = (blob: Blob) => t.run((ctx) => storeTestImage(ctx, blob));
+  const store = (blob: Blob) => t.run(async (ctx) => storeTestImage(ctx, blob));
   const imageId = await store(new Blob([png], { type: "image/png" }));
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "agent",
     parts: [{ text: "PNG draft", imageId }],
   });
-  const preview = await t.query(api.images.preview, { secret, imageId });
+  const preview = await t.query(api.images.preview, { imageId });
   expect(preview).toEqual({
     imageId,
     previewUrl: expect.stringMatching(/^https?:\/\//),
   });
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     {
       _id: id,
       parts: [{ text: "PNG draft", imageId, imageUrl: preview.previewUrl }],
     },
   ]);
   expect(
-    await t.query(api.library.searchPosts, { secret, fullParts: true }),
+    await t.query(api.library.searchPosts, { fullParts: true }),
   ).toMatchObject([
     {
       id,
@@ -293,14 +292,12 @@ test("validates stored images when creating and updating drafts and returns imag
     const invalidId = await store(blob);
     await expect(
       t.mutation(api.posts.createDraft, {
-        secret,
         source: "agent",
         parts: [{ text: "bad", imageId: invalidId }],
       }),
     ).rejects.toThrow(message);
     await expect(
       t.mutation(api.posts.updateDraft, {
-        secret,
         id,
         parts: [{ text: "bad", imageId: invalidId }],
       }),
@@ -311,29 +308,26 @@ test("validates stored images when creating and updating drafts and returns imag
     new Blob([new Uint8Array(MAX_IMAGE_BYTES)], { type: "image/jpeg" }),
   );
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     parts: [{ text: "JPEG draft", imageId: maximum }],
   });
-  await t.run((ctx) => ctx.storage.delete(maximum));
+  await t.run(async (ctx) => ctx.storage.delete(maximum));
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     meta: { hook: "changed" },
   });
   await expect(
     t.mutation(api.posts.createDraft, {
-      secret,
       source: "agent",
       parts: [{ text: "deleted", imageId: maximum }],
     }),
   ).rejects.toThrow("Image not found");
-  expect(await t.query(api.posts.listQueue, { secret })).toHaveLength(1);
+  expect(await t.query(api.posts.listQueue, {})).toHaveLength(1);
 });
 
-test("defaults to Marketing and publishes a chosen topic only on the first part", async () => {
+test("starts without a public topic and publishes a chosen topic only on the first part", async () => {
   const { t, fake } = await setup();
-  const imageId = await t.run((ctx) =>
+  const imageId = await t.run(async (ctx) =>
     storeTestImage(ctx, new Blob(["image"], { type: "image/png" })),
   );
   for (const [index, topicTag] of [
@@ -341,10 +335,9 @@ test("defaults to Marketing and publishes a chosen topic only on the first part"
     "  Digital Marketing  ",
     "",
   ].entries()) {
-    const expected = topicTag === undefined ? "Marketing" : topicTag.trim();
+    const expected = topicTag?.trim() ?? "";
     const text = `tagged root ${index}`;
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "agent",
       parts: [
         { text, ...(index === 1 ? { imageId } : {}) },
@@ -353,12 +346,11 @@ test("defaults to Marketing and publishes a chosen topic only on the first part"
       ...(topicTag === undefined ? {} : { topicTag }),
       meta: { topic: "T01" },
     });
-    const { posts } = await t.query(api.posts.getPosts, { secret, ids: [id] });
+    const { posts } = await t.query(api.posts.getPosts, { ids: [id] });
     expect(posts[0]?.topicTag).toBe(expected || undefined);
     expect(posts[0]?.meta.topic).toBe("T01");
-    await t.mutation(api.posts.queue, { secret, id, at: Date.now() + 1_000 });
+    await t.mutation(api.posts.queue, { id, at: Date.now() + 1_000 });
     const plan = await t.query(api.posts.schedule, {
-      secret,
       from: Date.now(),
       day: Date.now(),
       days: 1,
@@ -385,12 +377,12 @@ test("defaults to Marketing and publishes a chosen topic only on the first part"
     );
     expect(reply?.params.get("topic_tag")).toBeNull();
     expect(
-      (
-        await t.query(api.library.page, { secret, view: "published" })
-      ).items.find((post) => post.id === id)?.topicTag,
+      (await t.query(api.library.page, { view: "published" })).items.find(
+        (post) => post.id === id,
+      )?.topicTag,
     ).toBe(expected || undefined);
     expect(
-      (await t.query(api.library.searchPosts, { secret, text })).find(
+      (await t.query(api.library.searchPosts, { text })).find(
         (post) => post.id === id,
       )?.topicTag,
     ).toBe(expected || undefined);
@@ -407,15 +399,13 @@ test("draft edits preserve omitted internal labels and clear explicit empty valu
     notes: "Keep the example",
   };
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "agent",
     parts: [{ text: "Original text" }],
     meta,
   });
   const read = async () =>
-    (await t.query(api.posts.getPosts, { secret, ids: [id] })).posts[0];
+    (await t.query(api.posts.getPosts, { ids: [id] })).posts[0];
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     parts: [{ text: "Revised text" }],
   });
@@ -423,16 +413,14 @@ test("draft edits preserve omitted internal labels and clear explicit empty valu
     parts: [{ text: "Revised text" }],
     meta,
   });
-  await t.mutation(api.posts.updateDraft, { secret, id, meta: {} });
+  await t.mutation(api.posts.updateDraft, { id, meta: {} });
   expect((await read())?.meta).toEqual(meta);
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     meta: { notes: "New example" },
   });
   expect((await read())?.meta).toEqual({ ...meta, notes: "New example" });
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     meta: { topic: "T06" },
   });
@@ -442,7 +430,6 @@ test("draft edits preserve omitted internal labels and clear explicit empty valu
     notes: "New example",
   });
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     meta: { topic: "", angle: "", format: "", hook: "", notes: "" },
   });
@@ -452,15 +439,14 @@ test("draft edits preserve omitted internal labels and clear explicit empty valu
 test("validates, preserves and clears the public topic independently of internal labels", async () => {
   const { t } = await setup();
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "topic edits" }],
+    topicTag: "Marketing",
     meta: { topic: "T15" },
   });
   const read = async () =>
-    (await t.query(api.posts.getPosts, { secret, ids: [id] })).posts[0];
+    (await t.query(api.posts.getPosts, { ids: [id] })).posts[0];
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     meta: { topic: "T06" },
   });
@@ -468,26 +454,23 @@ test("validates, preserves and clears the public topic independently of internal
   for (const topicTag of ["a".repeat(51), "Ads & sales", "Meta.ads"]) {
     await expect(
       t.mutation(api.posts.createDraft, {
-        secret,
         source: "agent",
         parts: [{ text: "invalid topic" }],
         topicTag,
       }),
     ).rejects.toThrow();
     await expect(
-      t.mutation(api.posts.updateDraft, { secret, id, topicTag }),
+      t.mutation(api.posts.updateDraft, { id, topicTag }),
     ).rejects.toThrow();
   }
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     topicTag: "😀".repeat(50),
   });
   expect((await read())?.topicTag).toBe("😀".repeat(50));
-  await t.mutation(api.posts.updateDraft, { secret, id, topicTag: "   " });
+  await t.mutation(api.posts.updateDraft, { id, topicTag: "   " });
   expect((await read())?.topicTag).toBeUndefined();
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     parts: [{ text: "new text" }],
   });
@@ -500,35 +483,32 @@ test("sets topics atomically on drafts and queued posts without moving their slo
   const ids = await Promise.all(
     ["draft", "queued", "published"].map((text) =>
       t.mutation(api.posts.createDraft, {
-        secret,
         source: "agent",
         parts: [{ text }],
       }),
     ),
   );
-  const at = await t.mutation(api.posts.queue, { secret, id: ids[1] });
+  const at = await t.mutation(api.posts.queue, { id: ids[1] });
   expect(
     await t.mutation(api.posts.setTopicTag, {
-      secret,
       ids: [ids[0], ids[1], ids[0]],
       topicTag: "  Ecommerce  ",
     }),
   ).toEqual({ updated: 2 });
-  const read = async () =>
-    (await t.query(api.posts.getPosts, { secret, ids })).posts;
+  const read = async () => (await t.query(api.posts.getPosts, { ids })).posts;
   expect((await read()).slice(0, 2).map((post) => post?.topicTag)).toEqual([
     "Ecommerce",
     "Ecommerce",
   ]);
   expect((await read())[1]?.at).toBe(at);
-  await t.run((ctx) =>
+  await t.run(async (ctx) =>
     ctx.db.patch(ids[2], {
       publishedIds: ["already-live"],
       status: { kind: "failed", at: Date.now(), error: "reply failed" },
     }),
   );
   await expect(
-    t.mutation(api.posts.setTopicTag, { secret, ids, topicTag: "Different" }),
+    t.mutation(api.posts.setTopicTag, { ids, topicTag: "Different" }),
   ).rejects.toThrow("before publishing");
   expect((await read()).slice(0, 2).map((post) => post?.topicTag)).toEqual([
     "Ecommerce",
@@ -536,27 +516,23 @@ test("sets topics atomically on drafts and queued posts without moving their slo
   ]);
   await expect(
     t.mutation(api.posts.updateDraft, {
-      secret,
       id: ids[2],
       topicTag: "Different",
     }),
   ).rejects.toThrow("published first post");
   await expect(
     t.mutation(api.posts.setTopicTag, {
-      secret,
       ids: [],
       topicTag: "Marketing",
     }),
   ).rejects.toThrow("1 and 100");
   await expect(
     t.mutation(api.posts.setTopicTag, {
-      secret,
       ids: [ids[0]],
       topicTag: "A&B",
     }),
   ).rejects.toThrow("ampersands");
   await t.mutation(api.posts.setTopicTag, {
-    secret,
     ids: [ids[0], ids[1]],
     topicTag: "",
   });
@@ -572,15 +548,13 @@ test("queues consecutive WIB slots, spills after noon, and publishes each schedu
   for (const text of ["one", "two", "three"]) {
     ids.push(
       await t.mutation(api.posts.createDraft, {
-        secret,
         parts: [{ text }],
         source: "agent",
       }),
     );
   }
   const slots: number[] = [];
-  for (const id of ids)
-    slots.push(await t.mutation(api.posts.queue, { secret, id }));
+  for (const id of ids) slots.push(await t.mutation(api.posts.queue, { id }));
   expect(slots).toEqual([
     Date.parse("2026-10-18T05:00:00Z"),
     Date.parse("2026-10-18T23:00:00Z"),
@@ -591,7 +565,7 @@ test("queues consecutive WIB slots, spills after noon, and publishes each schedu
     await t.finishAllScheduledFunctions(() =>
       vi.advanceTimersByTime(Math.max(1_000, slots[index] - Date.now())),
     );
-    const posts = await t.query(api.posts.listQueue, { secret });
+    const posts = await t.query(api.posts.listQueue, {});
     expect(posts[index]).toMatchObject({
       _id: ids[index],
       publishedIds: [`post-${index + 1}`],
@@ -611,9 +585,8 @@ test("queues consecutive WIB slots, spills after noon, and publishes each schedu
 test("publishes a three-part reply chain with an image from Convex storage", async () => {
   const { t, fake } = await setup();
   const image = new Blob(["image"], { type: "image/png" });
-  const imageId = await t.run((ctx) => storeTestImage(ctx, image));
+  const imageId = await t.run(async (ctx) => storeTestImage(ctx, image));
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [
       { text: "part 1" },
@@ -621,10 +594,10 @@ test("publishes a three-part reply chain with an image from Convex storage", asy
       { text: "part 3" },
     ],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
-  await expect(
-    t.mutation(api.posts.deletePost, { secret, id }),
-  ).rejects.toThrow("publishing");
+  await t.mutation(api.posts.publishNow, { id });
+  await expect(t.mutation(api.posts.deletePost, { id })).rejects.toThrow(
+    "publishing",
+  );
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(
     fake.live.map(({ text, replied_to }) => ({ text, parent: replied_to?.id })),
@@ -638,7 +611,7 @@ test("publishes a three-part reply chain with an image from Convex storage", asy
   );
   expect(containers[1].params.get("media_type")).toBe("IMAGE");
   expect(containers[1].params.get("image_url")).toMatch(/^https?:\/\//);
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     {
       publishedIds: ["post-1", "post-2", "post-3"],
       status: {
@@ -653,13 +626,12 @@ test("marks a post failed with Meta's container processing error", async () => {
   const { t, fake } = await setup();
   fake.fail("broken image", "processing");
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "broken image" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     {
       publishedIds: [],
       status: { kind: "failed", error: "Media processing failed" },
@@ -677,14 +649,13 @@ test.each(["reject", "timeout"] as const)(
     const { t, fake } = await setup();
     fake.fail("part 2", mode);
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "agent",
       parts: [{ text: "part 1" }, { text: "part 2" }, { text: "part 3" }],
     });
-    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.mutation(api.posts.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     if (mode === "reject") {
-      expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+      expect(await t.query(api.posts.listQueue, {})).toMatchObject([
         {
           publishedIds: ["post-1"],
           status: { kind: "failed", error: "Part rejected" },
@@ -692,12 +663,11 @@ test.each(["reject", "timeout"] as const)(
       ]);
       await expect(
         t.mutation(api.posts.updateDraft, {
-          secret,
           id,
           parts: [{ text: "changed root" }],
         }),
       ).rejects.toThrow("Published parts");
-      await t.mutation(api.posts.retry, { secret, id });
+      await t.mutation(api.posts.retry, { id });
       await t.finishAllScheduledFunctions(vi.runAllTimers);
     }
     expect(fake.live.map(({ text }) => text)).toEqual([
@@ -723,7 +693,7 @@ test.each(["reject", "timeout"] as const)(
       ),
     ).toHaveLength(mode === "timeout" ? 1 : 2);
     expect(fake.requests.some(({ path }) => path === "me/replies")).toBe(true);
-    expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    expect(await t.query(api.posts.listQueue, {})).toMatchObject([
       {
         publishedIds: ["post-1", "post-2", "post-3"],
         status: { kind: "published" },
@@ -735,53 +705,50 @@ test.each(["reject", "timeout"] as const)(
 test("cancels unqueued and deleted jobs, rejects taken times, and reserves published slots", async () => {
   const { t, fake } = await setup();
   const first = await t.mutation(api.posts.createDraft, {
-    secret,
     parts: [{ text: "first" }],
     source: "web",
   });
   const second = await t.mutation(api.posts.createDraft, {
-    secret,
     parts: [{ text: "second" }],
     source: "web",
   });
   const third = await t.mutation(api.posts.createDraft, {
-    secret,
     parts: [{ text: "third" }],
     source: "web",
   });
-  const at = await t.mutation(api.posts.queue, { secret, id: first });
-  await expect(
-    t.mutation(api.posts.queue, { secret, id: second, at }),
-  ).rejects.toThrow("already taken");
-  const queuedFirst = (await t.query(api.posts.listQueue, { secret })).find(
+  const at = await t.mutation(api.posts.queue, { id: first });
+  await expect(t.mutation(api.posts.queue, { id: second, at })).rejects.toThrow(
+    "already taken",
+  );
+  const queuedFirst = (await t.query(api.posts.listQueue, {})).find(
     ({ _id }) => _id === first,
   );
   if (queuedFirst?.status.kind !== "queued")
     throw new Error("Expected queued post");
   const firstJob = queuedFirst.status.jobId;
-  await t.mutation(api.posts.unqueue, { secret, id: first });
+  await t.mutation(api.posts.unqueue, { id: first });
   expect(
     await t.run(async (ctx) => (await ctx.db.system.get(firstJob))?.state.kind),
   ).toBe("canceled");
-  await t.mutation(api.posts.queue, { secret, id: second, at });
-  const queuedSecond = (await t.query(api.posts.listQueue, { secret })).find(
+  await t.mutation(api.posts.queue, { id: second, at });
+  const queuedSecond = (await t.query(api.posts.listQueue, {})).find(
     ({ _id }) => _id === second,
   );
   if (queuedSecond?.status.kind !== "queued")
     throw new Error("Expected queued post");
   const secondJob = queuedSecond.status.jobId;
-  await t.mutation(api.posts.deletePost, { secret, id: second });
+  await t.mutation(api.posts.deletePost, { id: second });
   expect(
     await t.run(
       async (ctx) => (await ctx.db.system.get(secondJob))?.state.kind,
     ),
   ).toBe("canceled");
-  await t.mutation(api.posts.queue, { secret, id: third, at });
-  await t.mutation(api.posts.publishNow, { secret, id: third });
+  await t.mutation(api.posts.queue, { id: third, at });
+  await t.mutation(api.posts.publishNow, { id: third });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   await t.mutation(internal.posts.fire, { id: first, retry: false });
   expect(fake.live.map(({ text }) => text)).toEqual(["third"]);
-  expect(await t.query(api.posts.listQueue, { secret })).toEqual(
+  expect(await t.query(api.posts.listQueue, {})).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ _id: first, status: { kind: "draft" } }),
       expect.objectContaining({
@@ -800,9 +767,9 @@ test("cancels unqueued and deleted jobs, rejects taken times, and reserves publi
     });
   });
   vi.setSystemTime(at - 1);
-  await expect(
-    t.mutation(api.posts.queue, { secret, id: first, at }),
-  ).rejects.toThrow("already taken");
+  await expect(t.mutation(api.posts.queue, { id: first, at })).rejects.toThrow(
+    "already taken",
+  );
 });
 
 test("code 190 holds a publish, flags reconnect, and a refresh releases it", async () => {
@@ -810,26 +777,27 @@ test("code 190 holds a publish, flags reconnect, and a refresh releases it", asy
   fake.fail("expired", "token");
   fake.failVerification(190);
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "expired" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     { status: { kind: "held", reason: "Invalid access token" }, held: true },
   ]);
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  expect(await t.query(api.account.current, {})).toMatchObject({
     needsReconnect: true,
   });
   expect(fake.requests.filter(({ path }) => path === "me")).toMatchObject([
     { url: "https://graph.threads.net/v1.0/me?fields=id" },
   ]);
-  await t.action(internal.publishing.refreshToken, {});
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
+  expect(await t.query(api.account.current, {})).toMatchObject({
     needsReconnect: false,
   });
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     { status: { kind: "queued", retry: false } },
   ]);
   expect(
@@ -855,8 +823,10 @@ test("code 190 holds a publish, flags reconnect, and a refresh releases it", asy
   vi.setSystemTime(Date.now() + 86_400_000);
   fake.failRefresh();
   fake.failVerification(190);
-  await t.action(internal.publishing.refreshToken, {});
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
+  expect(await t.query(api.account.current, {})).toMatchObject({
     needsReconnect: true,
     lastRefreshError: "Refresh rejected",
     lastRefreshErrorAt: Date.now(),
@@ -866,15 +836,14 @@ test("code 190 holds a publish, flags reconnect, and a refresh releases it", asy
 test("a stuck publisher resumes with the same recovery checks as a retry", async () => {
   const { t, fake } = await setup();
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "stuck" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   vi.setSystemTime(Date.now() + 15 * 60_000 + 1);
   await t.mutation(internal.publishing.sweepStuck, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     { status: { kind: "published" } },
   ]);
   expect(fake.live.map(({ text }) => text)).toEqual(["stuck"]);
@@ -885,7 +854,7 @@ test("a stuck publisher resumes with the same recovery checks as a retry", async
   ).toBe(true);
 });
 
-test("rejects wrong or unset secrets and invalid parts, and edits only draft or failed posts", async () => {
+test("rejects invalid scoped credentials and invalid parts, and edits only draft or failed posts", async () => {
   const { t, fake } = await setup();
   const input = { parts: [{ text: "draft" }], source: "agent" as const };
   await expect(
@@ -894,11 +863,11 @@ test("rejects wrong or unset secrets and invalid parts, and edits only draft or 
   await expect(
     t.query(api.posts.listQueue, { secret: "wrong" }),
   ).rejects.toThrow("Unauthorized");
-  vi.stubEnv("ANTRE_SECRET", "");
+
   await expect(
     t.mutation(api.posts.createDraft, { ...input, secret: "" }),
   ).rejects.toThrow("Unauthorized");
-  vi.stubEnv("ANTRE_SECRET", secret);
+
   for (const parts of [
     [],
     [{ text: "" }],
@@ -906,34 +875,32 @@ test("rejects wrong or unset secrets and invalid parts, and edits only draft or 
     [{ text: "x".repeat(501) }],
   ]) {
     await expect(
-      t.mutation(api.posts.createDraft, { secret, source: "web", parts }),
+      t.mutation(api.posts.createDraft, { source: "web", parts }),
     ).rejects.toThrow("1–500");
   }
-  const id = await t.mutation(api.posts.createDraft, { ...input, secret });
+  const id = await t.mutation(api.posts.createDraft, { ...input });
   await expect(
-    t.mutation(api.posts.updateDraft, { secret, id, parts: [] }),
+    t.mutation(api.posts.updateDraft, { id, parts: [] }),
   ).rejects.toThrow("1–500");
   await t.mutation(api.posts.updateDraft, {
-    secret,
     id,
     parts: [{ text: "edited" }],
     meta: { topic: "T01" },
   });
-  await expect(t.mutation(api.posts.retry, { secret, id })).rejects.toThrow(
+  await expect(t.mutation(api.posts.retry, { id })).rejects.toThrow(
     "Only failed",
   );
   await expect(
-    t.mutation(api.posts.queue, { secret, id, at: Date.now() }),
+    t.mutation(api.posts.queue, { id, at: Date.now() }),
   ).rejects.toThrow("future");
-  await t.mutation(api.posts.queue, { secret, id });
+  await t.mutation(api.posts.queue, { id });
   await expect(
     t.mutation(api.posts.updateDraft, {
-      secret,
       id,
       parts: [{ text: "blocked" }],
     }),
   ).rejects.toThrow("Only drafts");
-  expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+  expect(await t.query(api.posts.listQueue, {})).toMatchObject([
     {
       parts: [{ text: "edited" }],
       meta: { topic: "T01" },
@@ -953,18 +920,34 @@ test("tokens younger than 24 hours skip refresh, then refresh at 24 hours", asyn
       tokenExpiresAt: Date.now() + 60 * 86_400_000,
     });
   });
-  const before = await t.query(internal.publishing.getAccount, {});
-  await t.action(internal.publishing.refreshToken, {});
+  const before = await t.query(internal.publishing.getAccount, {
+    workspaceId: await workspaceIdOf(t),
+  });
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
   vi.setSystemTime(Date.now() + 86_400_000 - 1);
-  await t.action(internal.publishing.refreshToken, {});
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
   expect(fake.requests).toEqual([]);
-  expect(await t.query(internal.publishing.getAccount, {})).toEqual(before);
+  expect(
+    await t.query(internal.publishing.getAccount, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toEqual(before);
   vi.setSystemTime(Date.now() + 1);
-  await t.action(internal.publishing.refreshToken, {});
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
   expect(fake.requests.map(({ path }) => path)).toEqual([
     "refresh_access_token",
   ]);
-  expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+  expect(
+    await t.query(internal.publishing.getAccount, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     accessToken: "refreshed-test-token",
     needsReconnect: false,
   });
@@ -975,8 +958,14 @@ test.each([1, 190, "network"] as const)(
   async (failure) => {
     const { t, fake } = await setup();
     fake.failRefresh(failure);
-    await t.action(internal.publishing.refreshToken, {});
-    expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+    await t.action(internal.publishing.refreshToken, {
+      workspaceId: await workspaceIdOf(t),
+    });
+    expect(
+      await t.query(internal.publishing.getAccount, {
+        workspaceId: await workspaceIdOf(t),
+      }),
+    ).toMatchObject({
       accessToken: "test-access-token",
       needsReconnect: false,
       lastRefreshError:
@@ -989,11 +978,10 @@ test.each([1, 190, "network"] as const)(
         : ["refresh_access_token"],
     );
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "still works" }],
     });
-    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.mutation(api.posts.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(fake.live.map(({ text }) => text)).toEqual(["still works"]);
     const refresh = {
@@ -1001,11 +989,11 @@ test.each([1, 190, "network"] as const)(
         failure === "network" ? "Connection reset" : "Refresh rejected",
       lastRefreshErrorAt: expect.any(Number),
     };
-    expect(await t.query(api.posts.listQueue, { secret })).toMatchObject([
+    expect(await t.query(api.posts.listQueue, {})).toMatchObject([
       { account: refresh },
     ]);
     expect(
-      await t.query(api.library.page, { secret, view: "published" }),
+      await t.query(api.library.page, { view: "published" }),
     ).toMatchObject({ account: refresh });
   },
 );
@@ -1016,12 +1004,18 @@ test.each([190, 1, "network"] as const)(
     const { t, fake } = await setup();
     fake.failRefresh(190);
     fake.failVerification(failure);
-    await t.action(internal.publishing.refreshToken, {});
+    await t.action(internal.publishing.refreshToken, {
+      workspaceId: await workspaceIdOf(t),
+    });
     expect(fake.requests.map(({ path }) => path)).toEqual([
       "refresh_access_token",
       "me",
     ]);
-    expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+    expect(
+      await t.query(internal.publishing.getAccount, {
+        workspaceId: await workspaceIdOf(t),
+      }),
+    ).toMatchObject({
       accessToken: "test-access-token",
       needsReconnect: failure === 190,
       lastRefreshError: "Refresh rejected",
@@ -1036,11 +1030,10 @@ test.each(["server", "rate", "network"] as const)(
     const { t, fake } = await setup();
     fake.fail("recover", mode);
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "recover" }],
     });
-    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.mutation(api.posts.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
       status: { kind: "published" },
@@ -1063,11 +1056,10 @@ test("transient retries stop after three backoffs", async () => {
   const { t, fake } = await setup();
   fake.fail("unavailable", "server", 10);
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "unavailable" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
     status: { kind: "failed", error: "Try again" },
@@ -1092,32 +1084,39 @@ test("refresh failures flag expired tokens and stale refresh results cannot repl
     await ctx.db.patch(account._id, { tokenExpiresAt: Date.now() - 1 });
   });
   fake.failRefresh(1);
-  await t.action(internal.publishing.refreshToken, {});
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  await t.action(internal.publishing.refreshToken, {
+    workspaceId: await workspaceIdOf(t),
+  });
+  expect(await t.query(api.account.current, {})).toMatchObject({
     needsReconnect: true,
     lastRefreshError: "Refresh rejected",
   });
-  await t.mutation(api.account.connect, {
-    secret,
+  await connectThreads(t, {
     threadsUserId: "user",
     username: "owner",
     accessToken: "new-token",
     tokenExpiresAt: Date.now() + 86_400_000,
   });
   await t.mutation(internal.publishing.saveToken, {
+    workspaceId: await workspaceIdOf(t),
     expectedToken: "test-access-token",
     error: "Old request",
     invalid: true,
   });
   await t.mutation(internal.publishing.saveToken, {
+    workspaceId: await workspaceIdOf(t),
     expectedToken: "test-access-token",
     token: { accessToken: "old-refreshed", tokenExpiresAt: Date.now() + 10 },
   });
-  expect(await t.query(internal.publishing.getAccount, {})).toMatchObject({
+  expect(
+    await t.query(internal.publishing.getAccount, {
+      workspaceId: await workspaceIdOf(t),
+    }),
+  ).toMatchObject({
     accessToken: "new-token",
     needsReconnect: false,
   });
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  expect(await t.query(api.account.current, {})).toMatchObject({
     lastRefreshError: null,
     lastRefreshErrorAt: null,
   });
@@ -1126,20 +1125,17 @@ test("refresh failures flag expired tokens and stale refresh results cannot repl
 test("moving a fresh queued post does not treat an older identical post as its own publication", async () => {
   const { t, fake } = await setup();
   const first = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "same text" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id: first });
+  await t.mutation(api.posts.publishNow, { id: first });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   const second = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "same text" }],
   });
-  await t.mutation(api.posts.queue, { secret, id: second });
+  await t.mutation(api.posts.queue, { id: second });
   await t.mutation(api.posts.move, {
-    secret,
     id: second,
     at: Date.now() + 60_000,
   });
@@ -1153,7 +1149,6 @@ test("moving a fresh queued post does not treat an older identical post as its o
 test("a legacy queued retry keeps recovery checks through a move and publish-now", async () => {
   const { t, fake } = await setup();
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "ambiguous publish" }],
   });
@@ -1163,7 +1158,7 @@ test("a legacy queued retry keeps recovery checks through a move and publish-now
     text: "ambiguous publish",
     timestamp: new Date().toISOString(),
   });
-  await t.run((ctx) =>
+  await t.run(async (ctx) =>
     ctx.db.patch(id, {
       status: {
         kind: "failed",
@@ -1172,7 +1167,7 @@ test("a legacy queued retry keeps recovery checks through a move and publish-now
       },
     }),
   );
-  await t.mutation(api.posts.queue, { secret, id });
+  await t.mutation(api.posts.queue, { id });
   await t.run(async (ctx) => {
     const post = await ctx.db.get(id);
     if (post?.status.kind !== "queued") throw new Error("Expected queued post");
@@ -1180,11 +1175,11 @@ test("a legacy queued retry keeps recovery checks through a move and publish-now
     expect(retry).toBe(true);
     await ctx.db.patch(id, { status: legacyStatus });
   });
-  await t.mutation(api.posts.move, { secret, id, at: Date.now() + 60_000 });
+  await t.mutation(api.posts.move, { id, at: Date.now() + 60_000 });
   expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
     status: { kind: "queued", retry: true },
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(fake.live).toHaveLength(1);
   expect(fake.requests.some(({ method }) => method === "POST")).toBe(false);
@@ -1199,7 +1194,6 @@ test.each(["fire", "publishNow"] as const)(
   async (entry) => {
     const { t, fake, block, reconnect } = await setup();
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "same text" }],
     });
@@ -1209,8 +1203,8 @@ test.each(["fire", "publishNow"] as const)(
       timestamp: new Date().toISOString(),
     });
     await block();
-    if (entry === "fire") await t.mutation(api.posts.queue, { secret, id });
-    else await t.mutation(api.posts.publishNow, { secret, id });
+    if (entry === "fire") await t.mutation(api.posts.queue, { id });
+    else await t.mutation(api.posts.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
       status: { kind: "held", retry: false },
@@ -1244,7 +1238,6 @@ test.each(["fire", "publishNow"] as const)(
   async (entry) => {
     const { t, fake, block, reconnect } = await setup();
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "lost response" }],
     });
@@ -1253,15 +1246,14 @@ test.each(["fire", "publishNow"] as const)(
       text: "lost response",
       timestamp: new Date().toISOString(),
     });
-    await t.run((ctx) =>
+    await t.run(async (ctx) =>
       ctx.db.patch(id, {
         status: { kind: "failed", at: Date.now(), error: "Lost response" },
       }),
     );
-    await t.mutation(api.posts.queue, { secret, id });
+    await t.mutation(api.posts.queue, { id });
     await block();
-    if (entry === "publishNow")
-      await t.mutation(api.posts.publishNow, { secret, id });
+    if (entry === "publishNow") await t.mutation(api.posts.publishNow, { id });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
       status: { kind: "held", retry: true },
@@ -1289,7 +1281,6 @@ test.each([undefined, false])(
   async (retry) => {
     const { t, fake, reconnect } = await setup();
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "root" }, { text: "reply" }],
     });
@@ -1302,7 +1293,7 @@ test.each([undefined, false])(
         timestamp: new Date().toISOString(),
       },
     );
-    await t.run((ctx) =>
+    await t.run(async (ctx) =>
       ctx.db.patch(id, {
         publishedIds: ["post-1"],
         status: {
@@ -1335,14 +1326,13 @@ test.each([undefined, 1, "network"] as const)(
     fake.fail("still valid", "token");
     if (verification !== undefined) fake.failVerification(verification);
     const id = await t.mutation(api.posts.createDraft, {
-      secret,
       source: "web",
       parts: [{ text: "still valid" }],
     });
-    await t.mutation(api.posts.publishNow, { secret, id });
+    await t.mutation(api.posts.publishNow, { id });
     await vi.advanceTimersByTimeAsync(5_000);
     await t.finishInProgressScheduledFunctions();
-    expect(await t.query(api.account.current, { secret })).toMatchObject({
+    expect(await t.query(api.account.current, {})).toMatchObject({
       needsReconnect: false,
     });
     const post = await t.query(internal.publishing.getPost, { id });
@@ -1352,7 +1342,9 @@ test.each([undefined, 1, "network"] as const)(
     if (post?.status.kind !== "publishing" || !post.status.retryJobId)
       throw new Error("Expected scheduled retry");
     const retryJobId = post.status.retryJobId;
-    expect(await t.run((ctx) => ctx.db.system.get(retryJobId))).toMatchObject({
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(retryJobId)),
+    ).toMatchObject({
       state: { kind: "pending" },
     });
     expect(fake.requests.filter(({ path }) => path === "me")).toMatchObject([
@@ -1370,16 +1362,15 @@ test("unconfirmed publish 190 stops after three retries", async () => {
   const { t, fake } = await setup();
   fake.fail("unconfirmed", "token", 10);
   const id = await t.mutation(api.posts.createDraft, {
-    secret,
     source: "web",
     parts: [{ text: "unconfirmed" }],
   });
-  await t.mutation(api.posts.publishNow, { secret, id });
+  await t.mutation(api.posts.publishNow, { id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await t.query(internal.publishing.getPost, { id })).toMatchObject({
     status: { kind: "failed", error: "Invalid access token" },
   });
-  expect(await t.query(api.account.current, { secret })).toMatchObject({
+  expect(await t.query(api.account.current, {})).toMatchObject({
     needsReconnect: false,
   });
   expect(

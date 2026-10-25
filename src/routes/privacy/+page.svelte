@@ -8,8 +8,7 @@
 <main>
 	<h1>Privacy</h1>
 	<p>
-		Antre is a private tool for reviewing drafts and scheduling posts for its
-		account owner.
+		Antre gives each signed-in person a workspace for reviewing drafts and scheduling posts. The public demo uses sample data in your browser and does not publish posts.
 	</p>
 	<h2>What Antre stores</h2>
 	<p>
@@ -26,18 +25,14 @@
 	</p>
 	<h2>Where data goes</h2>
 	<p>
-		Vercel hosts the application. Convex stores application data and runs
+		WorkOS manages sign-in. An encrypted, HTTP-only cookie keeps your browser session. Vercel hosts the application. Convex stores workspace data and runs
 		publishing jobs. Publishing sends the selected post to its connected
 		platform. An agent given access to Antre's MCP endpoint can read and change
 		content through the tools exposed there.
 	</p>
 	<h2>Access and removal</h2>
 	<p>
-		The owner can remove local drafts in Antre and revoke Antre's access in
-		LinkedIn or Threads account settings. Removing a local post does not remove
-		a post that has already been published on those platforms. Revoking a
-		connection prevents future API access but does not erase Antre's stored
-		drafts.
+		Use Settings to disconnect a posting profile, revoke an agent key, or delete your workspace. Signing out ends your browser session; scheduled posts keep publishing. Disconnecting a profile holds its queued posts until you reconnect. Deleting your workspace stops its queue and removes its stored data and credentials. Posts already published on LinkedIn or Threads remain online. A request in flight may still publish.
 	</p>
 	<p>
 		For a request about this app or stored data, contact the maintainer through <a
@@ -49,6 +44,8 @@
 
 <style>
 	main {
+    max-width: 600px;
+    margin: 0 auto;
 		padding: 32px 20px;
 	}
 	h1 {

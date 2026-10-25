@@ -1,5 +1,6 @@
 import type { Doc } from "../_generated/dataModel";
-import type { QueryCtx } from "../_generated/server";
+import type { OwnedQueryCtx as QueryCtx } from "../access";
+import { ownedAsset } from "../access";
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const IMAGE_TYPES = ["image/jpeg", "image/png"] as const;
@@ -22,11 +23,14 @@ export async function partsWithImages(
   parts: Doc<"posts">["parts"],
 ) {
   return await Promise.all(
-    parts.map(async (part) => ({
-      ...part,
-      ...(part.imageId
-        ? { imageUrl: await ctx.storage.getUrl(part.imageId) }
-        : {}),
-    })),
+    parts.map(async (part) => {
+      if (part.imageId) await ownedAsset(ctx, ctx.workspaceId, part.imageId);
+      return {
+        ...part,
+        ...(part.imageId
+          ? { imageUrl: await ctx.storage.getUrl(part.imageId) }
+          : {}),
+      };
+    }),
   );
 }

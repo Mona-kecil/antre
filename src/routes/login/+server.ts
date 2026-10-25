@@ -1,27 +1,35 @@
-import { randomBytes } from "node:crypto";
-import * as env from "$app/env/private";
-import { error, redirect } from "@sveltejs/kit";
+import { redirect } from "@sveltejs/kit";
+import { authkit, safeReturnPath } from "#lib/server/session.ts";
 import type { RequestHandler } from "./$types";
 
-export const GET: RequestHandler = ({ url, cookies }) => {
-  if (!env.THREADS_APP_ID)
-    error(503, "Set THREADS_APP_ID in Vercel to connect Threads");
-  const state = randomBytes(32).toString("hex");
-  cookies.set("threads_state", state, {
-    path: "/auth/callback",
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    maxAge: 600,
-  });
-  const target = new URL("https://threads.net/oauth/authorize");
-  target.search = new URLSearchParams({
-    client_id: env.THREADS_APP_ID,
-    redirect_uri: `${url.origin}/auth/callback`,
-    scope:
-      "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies,threads_read_replies",
-    response_type: "code",
-    state,
-  }).toString();
-  redirect(302, target.toString(), { external: ["https://threads.net"] });
+export const GET: RequestHandler = async ({ url, cookies }) => {
+  const { workos, clientId, redirectUri } = authkit();
+  const authorization = await workos.userManagement.getAuthorizationUrlWithPKCE(
+    {
+      provider: "authkit",
+      clientId,
+      redirectUri,
+      screenHint:
+        url.searchParams.get("screen_hint") === "sign-up" ||
+        url.searchParams.get("signup") === "1"
+          ? "sign-up"
+          : "sign-in",
+    },
+  );
+  cookies.set(
+    "workos_oauth",
+    JSON.stringify({
+      state: authorization.state,
+      codeVerifier: authorization.codeVerifier,
+      returnTo: safeReturnPath(url.searchParams.get("returnTo")),
+    }),
+    {
+      path: "/auth/workos/callback",
+      httpOnly: true,
+      secure: url.protocol === "https:",
+      sameSite: "lax",
+      maxAge: 600,
+    },
+  );
+  redirect(302, authorization.url, { external: ["https://api.workos.com"] });
 };

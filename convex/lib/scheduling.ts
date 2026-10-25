@@ -1,7 +1,14 @@
-import { patchPost, schedulingPosts } from "./postStore";
+import { futureLocalDay } from "../../src/lib/timezone";
+import { validateSchedulingSettings } from "../../src/lib/domain/scheduling";
+export { nextSlot } from "../../src/lib/domain/scheduling";
+import { nextSlot } from "../../src/lib/domain/scheduling";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type {
+  OwnedMutationCtx as MutationCtx,
+  OwnedQueryCtx as QueryCtx,
+} from "../access";
+import { patchPost, schedulingPosts } from "./postStore";
 
 export type QueueSettings = Extract<Doc<"settings">, { windows: unknown }>;
 type SettingsValue = Omit<QueueSettings, "_id" | "_creationTime">;
@@ -14,36 +21,19 @@ export const defaultSettings = {
 } satisfies SettingsValue;
 
 export function validateSettings(value: SettingsValue): SettingsValue {
-  if (
-    !Number.isInteger(value.intervalMinutes) ||
-    value.intervalMinutes < 5 ||
-    value.intervalMinutes > 240
-  )
-    throw new Error("Interval must be an integer between 5 and 240 minutes");
-  if (value.timeZone !== "Asia/Jakarta")
-    throw new Error("Time zone must be Asia/Jakarta");
-  if (!value.windows.length) throw new Error("Use at least one posting window");
-  const windows = [...value.windows].sort((a, b) =>
-    a.start.localeCompare(b.start),
-  );
-  for (const [index, window] of windows.entries()) {
-    if (
-      ![window.start, window.end].every((time) =>
-        /^([01]\d|2[0-3]):[0-5]\d$/.test(time),
-      )
-    )
-      throw new Error("Window times must use HH:MM (00:00–23:59)");
-    if (window.start > window.end)
-      throw new Error("Window start must not follow its end");
-    if (index > 0 && windows[index - 1].end >= window.start)
-      throw new Error("Posting windows must not overlap, including endpoints");
-  }
-  return { ...value, windows };
+  return validateSchedulingSettings(value);
 }
 
 export async function readSettings(ctx: QueryCtx): Promise<SettingsValue> {
-  const row = await ctx.db.query("settings").unique();
-  if (!row) return defaultSettings;
+  const row = await ctx.db
+    .query("settings")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", ctx.workspaceId))
+    .unique();
+  if (!row) {
+    const workspace = await ctx.db.get(ctx.workspaceId);
+    if (!workspace) throw new Error("Workspace unavailable");
+    return { ...defaultSettings, timeZone: workspace.timeZone };
+  }
   // Only this adapter reads the legacy shape during the migration deployment.
   return validateSettings(
     "windows" in row
@@ -71,33 +61,6 @@ export function occupiedTimes(posts: Doc<"posts">[]) {
         : [],
     ),
   );
-}
-
-const DAY = 86_400_000;
-const WIB = 7 * 60 * 60_000;
-const minutes = (time: string) => {
-  const [hour, minute] = time.split(":").map(Number);
-  return hour * 60 + minute;
-};
-
-// Inclusive window endpoints. Each window starts its own interval grid.
-export function nextSlot(
-  settings: SettingsValue,
-  occupied: Set<number>,
-  after: number,
-): number {
-  for (let day = Math.floor((after + WIB) / DAY) * DAY - WIB; ; day += DAY) {
-    for (const window of settings.windows) {
-      for (
-        let minute = minutes(window.start);
-        minute <= minutes(window.end);
-        minute += settings.intervalMinutes
-      ) {
-        const at = day + minute * 60_000;
-        if (at > after && !occupied.has(at)) return at;
-      }
-    }
-  }
 }
 
 export function validateTime(at: number, occupied: Set<number>) {
@@ -155,10 +118,12 @@ export async function startPublishing(
 ) {
   const startedAt = Math.max(
     Date.now(),
-    post.status.kind === "publishing" ? post.status.startedAt + 1 : 0,
+    (post.lastStartedAt ??
+      (post.status.kind === "publishing" ? post.status.startedAt : 0)) + 1,
   );
   await patchPost(ctx, post._id, {
     status: { kind: "publishing", at, startedAt, retry, attempt },
+    lastStartedAt: startedAt,
     source: post.source,
   });
   await ctx.scheduler.runAfter(0, internal.publishing.publish, {
@@ -256,10 +221,8 @@ export async function releaseHeld(ctx: MutationCtx) {
     if (post.status.kind === "draft") continue;
     let at: number;
     if (settings.gapPolicy === "keepTimes") {
-      // Keep the original WIB clock time, advancing whole days until future.
-      at =
-        post.status.at +
-        DAY * Math.max(1, Math.floor((Date.now() - post.status.at) / DAY) + 1);
+      // Preserve the local clock when advancing a held post to a future day.
+      at = futureLocalDay(post.status.at, Date.now(), settings.timeZone, 1);
       if (occupied.has(at) || at <= after)
         at = nextSlot(settings, occupied, Math.max(at, after));
     } else {

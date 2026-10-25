@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { dayLabel } from '#lib/time.ts';
+	import { dayLabel } from '#lib/displayTime.svelte.ts';
 	import Icon from './Icon.svelte';
 
 	type Account = {
@@ -16,7 +16,13 @@
 	);
 </script>
 
-{#if account?.needsReconnect}
+{#if !account}
+  <div class="banner" role="status">
+    <Icon name="alert" size={18} />
+    <p><strong>Connect Threads to publish.</strong> You can write drafts before connecting.</p>
+    <a class="btn btn-secondary" href="/auth/threads" data-sveltekit-reload>Connect</a>
+  </div>
+{:else if account.needsReconnect}
 	<div class="banner red" role="alert">
 		<Icon name="alert" size={18} />
 		<p>
@@ -25,7 +31,7 @@
 				? `${held} ${held === 1 ? 'post is' : 'posts are'} held and go back into the queue when you reconnect.`
 				: 'Queued posts will be held until you reconnect.'}
 		</p>
-		<a class="btn btn-primary" href="/login" data-sveltekit-reload>Reconnect</a>
+		<a class="btn btn-primary" href="/auth/threads" data-sveltekit-reload>Reconnect</a>
 	</div>
 {:else if account && (account.lastRefreshError || expiresSoon)}
 	<div class="banner amber" role="status">
@@ -36,7 +42,7 @@
 				? `The last automatic refresh failed: ${account.lastRefreshError}`
 				: 'Reconnect to keep posting.'}
 		</p>
-		<a class="btn btn-secondary" href="/login" data-sveltekit-reload>Reconnect</a>
+		<a class="btn btn-secondary" href="/auth/threads" data-sveltekit-reload>Reconnect</a>
 	</div>
 {/if}
 

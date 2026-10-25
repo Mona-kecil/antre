@@ -1,6 +1,13 @@
 # antre
 
-A review console and publisher for one Threads account and one personal LinkedIn profile. SvelteKit 3 serves the UI. Convex stores drafts, reserves queue slots, and runs publishing jobs. The original Threads spec is in [docs/prd.md](docs/prd.md).
+Antre reviews drafts and publishes scheduled posts to Threads and personal LinkedIn profiles. SvelteKit serves the site and MCP endpoint. Convex stores workspace data and runs publishing jobs. WorkOS AuthKit handles app login; platform OAuth connects posting profiles after login.
+
+- `/` introduces the app.
+- `/demo` uses synthetic data stored in the current browser. It cannot publish to a platform. Reset clears its saved edits.
+- `/app` holds a signed-in user's private workspace. Threads and LinkedIn keep separate posts, settings, and queues.
+- `/mcp` accepts a personal agent key created in workspace settings.
+
+This branch prepares the public release. Production migration and non-owner platform access checks remain separate release steps. The original Threads specification is in [docs/prd.md](docs/prd.md); the public architecture and implementation contract are in [docs/plans](docs/plans/public-workspaces.md).
 
 ## Develop
 
@@ -10,63 +17,78 @@ npx convex dev
 npm run dev
 ```
 
-The project uses `@sveltejs/adapter-vercel`. `npm run build` creates a local build; it does not deploy it.
+Use the same Convex deployment for the web server's `CONVEX_URL` and `CONVEX_DEPLOYMENT`. The old local setup pointed the web server at production while the Convex CLI used development. Check both before testing writes.
 
-Convex configuration writes `.env.local`, which is gitignored. Set `ANTRE_SECRET` in the Convex deployment and in the server environment that calls Convex. Never expose it through a `PUBLIC_` variable. All public functions require this secret; internal functions do not.
+Set server variables from [.env.example](.env.example). Public pages and the demo work without credentials. Login and private operations report missing configuration when requested. Keep all keys server-side; do not use a `PUBLIC_` prefix.
 
-Set the server variables listed in [.env.example](.env.example). Connect the owner through Threads OAuth at `/login`. No real platform credentials are needed for tests.
+## WorkOS
 
-Production builds require the server connection and authentication variables. Vercel previews can build the public pages with those values absent. Owner pages and MCP access still require their runtime configuration.
+Create a WorkOS staging environment for development. Register `http://localhost:5173/auth/workos/callback` as a redirect URI and `http://localhost:5173/` as a logout URI. Set:
 
-## Connect LinkedIn
+- `WORKOS_API_KEY` and `WORKOS_CLIENT_ID` from that same environment.
+- `WORKOS_COOKIE_PASSWORD` to a private random value of at least 32 characters.
+- `WORKOS_REDIRECT_URI` to the registered callback.
 
-1. Create a LinkedIn developer app. Enable **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`.
-2. Register `https://antre-hazel.vercel.app/auth/linkedin/callback` as an authorized redirect URL. The public privacy page is `https://antre-hazel.vercel.app/privacy`.
-3. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI` in Vercel's production environment. Keep the secret in the server environment. Rotate it there when the app secret changes.
-4. Deploy the Convex functions before deploying the web app. The schema adds LinkedIn tables without changing existing Threads documents or jobs.
-5. Log in as the Threads owner, switch to **LinkedIn**, and open **Settings → Connect LinkedIn**. Approve access to the personal profile you want to publish from.
+Set `WORKOS_CLIENT_ID` in the matching Convex deployment too:
 
-LinkedIn has separate drafts, topics, writing preferences, posting windows, and a library. Topics are internal labels. They are not sent as hashtags. The default schedule has one slot at 08:00 WIB each day. Change it in LinkedIn settings.
+```sh
+npx convex env set WORKOS_CLIENT_ID client_your_staging_client
+```
 
-The first release publishes one text body of 1–3,000 Unicode code points. Posts remain drafts until queued or published by the owner or an authorized MCP caller. Public reads omit access tokens. Expired access holds LinkedIn posts until the same profile reconnects.
+`convex/auth.config.ts` validates AuthKit JWTs with WorkOS's JWKS. Each server request creates its own Convex client and sets the verified user's access token. The old `ANTRE_SECRET`, `SESSION_SECRET`, and global `MCP_TOKEN` do not authorize app requests.
 
-A timeout, server error, or missing publish ID can leave the result unknown. These posts appear as held in Schedule and never resend on reconnect. Check your LinkedIn profile before retrying. The UI requires confirmation, and the MCP retry tool requires `confirmDuplicateRisk: true` plus the current `retryAttempt` as `expectedStartedAt`. Consent for an older attempt is rejected.
+The WorkOS CLI is available through `npx workos@latest`. `profile list` shows local profiles. Check the project, environment, and client ID together: an environment target alone does not replace the profile's API credentials.
 
-The agent uses the `*_linkedin_*` MCP tools and reads `get_linkedin_settings` for this channel's topics and writing preferences. The existing tools keep their Threads behavior. LinkedIn replies, media uploads, imported history, and engagement metrics are outside this release.
+## Posting profiles
 
-## Backend API
+Threads needs `THREADS_APP_ID` and `THREADS_APP_SECRET`. Register `/auth/callback` on the app origin as its OAuth callback. The same app secret must be set in Convex for signed Meta uninstall and deletion callbacks.
 
-Public mutations in `convex/posts.ts`: `createDraft`, `updateDraft`, `setTopicTag`, `queue`, `unqueue`, `publishNow`, `retry`, `deletePost`. Public query: `listQueue`. Every call takes `secret`.
+LinkedIn needs **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI`; register `/auth/linkedin/callback` on the app origin. The privacy page is `/privacy`.
 
-Threads defaults to a `06:00`–`12:00` window in `Asia/Jakarta`, with a `30` minute interval. Change the window in Threads settings. The end time is inclusive. Explicit queue times use Unix milliseconds and may fall outside that window.
+Sign in to Antre, then connect either profile from onboarding or settings. A LinkedIn-only workspace does not need Threads. Connections verify the platform token's identity before storage. A remote profile can belong to one workspace; reconnecting must use that same profile so queued posts cannot change destination.
 
-- `createDraft` takes `parts`, optional `meta` and `topicTag`, and `source` (`web` or `agent`). Each part needs 1–500 Unicode code points and may reference a stored image. `topicTag` defaults to `Marketing`. An empty string creates a draft without a tag.
-- `updateDraft` takes `id` and optional `parts`, `meta`, and `topicTag`. Drafts and failed posts can be edited. Omitted `meta` fields and `topicTag` keep their current values. An empty string clears the supplied field. Parts whose IDs have been saved cannot be changed or removed. The topic cannot change after the first part's ID is saved.
-- `setTopicTag` takes `ids` (1–100 post IDs) and `topicTag`. It updates drafts, queued, held, or failed posts in one transaction without moving their schedule. It rejects the batch if any post is publishing or has a published first part. The MCP tool is `set_topic_tag`, with the same arguments.
-- `queue` takes `id` and optional `at`, returning the reserved timestamp. Drafts and failed posts can be queued. Queued, publishing, and published posts hold their times.
-- `unqueue` takes a queued `id`, cancels its job, and returns it to drafts. `deletePost` cancels a queued job and removes the local record; publishing posts cannot be deleted. It does not delete content from Threads.
-- `publishNow` starts a draft, queued, or failed post at the current time. `retry` starts a failed post at the current time. Both keep saved part IDs.
-- `listQueue` returns posts sorted by queue time (creation time for drafts). Optional `days` limits scheduled times to that many days ahead; drafts and history remain visible. It never returns account tokens.
+Provider credentials and source configuration do not prove public approval. Test each advertised channel with a non-owner account before launch.
 
-The composer and MCP tools `create_draft` and `update_draft` expose `topicTag` as the public Threads topic. A tag has 1–50 Unicode code points and cannot contain a period or ampersand. The publisher sends it as `topic_tag` on the first part only. The internal `meta.topic` label remains separate.
+## Publishing behavior
 
-Queuing and scheduling share one mutation. The internal `fire` mutation starts publishing only from `queued`. The action saves each part ID before sending the next reply and reads the first part's permalink at completion. Errors preserve progress. Error 190 flags the account for reconnecting. An attempt timestamp stops an action from overwriting a later retry's state.
+Threads supports multipart posts, images, replies, metrics, and imported history. Each part allows 1–500 Unicode code points. Published part IDs are saved between requests so recovery can resume a partial thread. Recovery searches recent remote posts for matching text and parent IDs; this reduces duplicates but does not guarantee idempotency.
 
-Retries check exact text in the account's recent root-post or reply feed. Reply matches must also have the expected parent ID. The check requests posts since draft creation, up to the latest 100 results per unfinished part. This reduces duplicates after a timeout; it cannot guarantee idempotency if a post is absent from that feed or has fallen beyond its first page. The Threads publish endpoint has no idempotency key.
+LinkedIn supports one text post of 1–3,000 Unicode code points. A timeout, server error, or missing success ID can leave the result unknown. These posts are held until the user checks their profile and confirms duplicate risk for the current attempt. Reconnecting does not resend an unknown result. LinkedIn images, Pages, replies, engagement metrics, and history import are outside this release.
 
-Crons fail publishing attempts older than 10 minutes every 10 minutes and refresh the token on Mondays at 00:00 UTC. Any refresh failure flags `needsReconnect`.
+Queues live on post status records. A queued post stores its time, job ID, and generation. Background jobs derive the workspace from persisted records. Missing ownership blocks dispatch. The two channel engines remain separate.
 
-## Verify
+Automatic slots use the channel's IANA timezone. Each posting window starts its own interval grid, with inclusive endpoints. A nonexistent local slot is skipped; a repeated local slot uses its earlier occurrence. Explicit future timestamps can fall outside automatic windows. Changing timezone leaves existing queued UTC instants fixed. The legacy workspace keeps Asia/Jakarta.
+
+Threads transient failures retry after 1, 5, and 15 minutes. Recovery sweeps run every 10 minutes and inspect attempts older than 15 minutes. Threads token refresh runs daily at 00:00 UTC, library sync at 01:00 UTC, and reply sync hourly. No cron refreshes LinkedIn tokens or imports LinkedIn history.
+
+Signing out ends the browser session and leaves scheduled publishing running. Disconnecting removes the usable channel token and blocks further dispatch until reconnect. Deleting a workspace blocks access and dispatch, cancels queued jobs, then removes stored data. A request sent before disconnect or deletion can still finish; its receipt remains recordable during cleanup. Published remote posts stay online.
+
+## Agents and images
+
+Create an agent key in settings and send it as `Authorization: Bearer …` to `/mcp`. Only the key hash is stored. Each key belongs to one workspace and can be revoked. Agent keys cannot manage user identity, connect posting profiles, create more keys, or delete the workspace.
+
+The existing Threads and `*_linkedin_*` tool names stay in place. Timestamp objects keep `iso` and `wib`, with `local` and `timeZone` added. An omitted draft label keeps its stored value; an empty label clears it.
+
+Image ingestion records workspace ownership. A storage ID alone cannot claim an image. Preview, attachment, and deletion check that ownership. Platform publishers receive storage URLs for the selected workspace's attachments.
+
+## Verify and release
 
 ```sh
 npm run check
 npm test
 npm run build
-npx convex dev --once
 ```
 
-`npx convex dev` targets the dev deployment named by `CONVEX_DEPLOYMENT` in `.env.local`, which holds no posts. The app reads the production deployment through `CONVEX_URL`. Pushing to `main` deploys the Convex functions and then the app. The production build in `vercel.json` runs `npx convex deploy` with the `CONVEX_DEPLOY_KEY` set in Vercel's production environment. Preview builds skip Convex. Run production functions with `npx convex run --prod`.
+Tests exercise workspace isolation, owned media, personal agent grants, timezone transitions, migration, and publishing recovery with simulated provider responses. Live provider approval and posting need separate account tests.
 
-Seven Convex flow tests use `convex-test`, the edge runtime, fake timers, and a global `fetch` fake. They cover WIB slot rollover and scheduled publishing, reply chains and images, rejected and ambiguous publishes, cancellation and occupied times, token errors and refresh, stale publishers, secret checks, and invalid drafts. Crons are invoked by their registered target because `convex-test` does not execute cron schedules.
+Pushing to `main` deploys the Convex functions and then the app. The production build in `vercel.json` runs `npx convex deploy` with the `CONVEX_DEPLOY_KEY` set in Vercel's production environment. Preview builds skip Convex. Run production functions with `npx convex run --prod`.
 
-Live Threads publishing remains untested. Requests follow [Meta's Threads Postman collection](https://www.postman.com/meta/threads/collection/dht3nzz/threads-api), including the [account replies feed](https://www.postman.com/meta/threads/request/2oj5hld/get-a-list-of-all-a-user-s-replies). Confirm permissions for reading replies, image-container readiness, token refresh responses, rate limits, and feed visibility after a timeout in the PRD's live-account spike.
+With the local Convex server and web server running, the integration check uses two temporary WorkOS staging users:
+
+```sh
+node scripts/check-workspaces.mjs --local
+```
+
+It requires a loopback Convex URL and staging WorkOS key. It checks real JWTs, private SSR pages, foreign IDs, media ingestion, one-use upload tickets, MCP access and revocation, and workspace deletion fencing. It removes the temporary WorkOS users and schedules local workspace cleanup when it finishes. It never connects posting profiles or publishes remote posts.
+
+`npm run build` creates a Vercel build; it does not deploy it. `npx convex dev --once` changes the selected development backend. `npx convex deploy` changes production. Do not deploy this schema over existing data without the [owner migration procedure](docs/plans/public-workspaces-rollout.md).
