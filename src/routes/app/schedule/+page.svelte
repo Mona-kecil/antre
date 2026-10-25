@@ -510,9 +510,10 @@
 		line-height: 21px;
 	}
 
-	/* The desktop week grid and agenda already show the week and the day's timeline. */
+	/* The desktop week grid and agenda already show the week, the day and its timeline. */
 	@media (min-width: 1100px) {
 		.week,
+		.summary,
 		:global(.dayline) {
 			display: none;
 		}

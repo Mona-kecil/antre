@@ -38,10 +38,18 @@
 		for (const marks of cells.values()) marks.sort((a, b) => urgency.indexOf(a.kind) - urgency.indexOf(b.kind) || a.at - b.at);
 		return cells;
 	}
+	const firstLine = (mark: WeekMark) => mark.text.split('\n')[0];
 	const describe = (marks: WeekMark[]) =>
 		marks.length === 1
-			? `${short(marks[0].at)} · ${marks[0].text.split('\n')[0]}`
+			? `${short(marks[0].at)} · ${firstLine(marks[0])}`
 			: `${short(marks[0].at)} · ${marks.length} posts`;
+	const label = (marks: WeekMark[]) =>
+		marks.length === 1
+			? describe(marks)
+			: `${describe(marks)}: ${marks.map((mark) => `${clock(mark.at)} ${firstLine(mark)}`).join('; ')}`;
+	// One post opens that post; a shared cell opens the whole day.
+	const cellHref = (marks: WeekMark[]) =>
+		marks.length === 1 || linkedin ? markHref(marks[0]) : `/app/schedule?day=${isoDay(marks[0].at)}`;
 
 	function withDay(day: number) {
 		const url = new URL(page.url.href);
@@ -88,7 +96,7 @@
 		</div>
 		{#each days as day}
 			{@const cells = byCell(day)}
-			{@const count = [...cells.values()].reduce((sum, marks) => sum + marks.length, 0)}
+			{@const count = week.marks.filter((mark) => mark.at >= day && mark.at < calendarDay(day, 1, tz)).length}
 			{@const lastPast = day === week.today ? windows(day).flat().filter((at) => at <= now).at(-1) : undefined}
 			<div class="col" class:on={day === week.day} class:today={day === week.today} class:past={day < week.today}>
 				<a
@@ -108,10 +116,10 @@
 								<a
 									class="cell {tone(marks[0])}"
 									class:now={at === lastPast}
-									href={markHref(marks[0])}
+									href={cellHref(marks)}
 									style:--c={topicColor(marks[0].topic ?? undefined, taxonomy)}
 									data-tip={describe(marks)}
-									aria-label={describe(marks)}
+									aria-label={label(marks)}
 								></a>
 							{:else if at > now}
 								<a
