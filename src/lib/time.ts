@@ -79,8 +79,11 @@ export function slots(
   const timeZone = settings.timeZone ?? DEFAULT_TIME_ZONE;
   return slotsForDay({ ...settings, timeZone }, isoDay(day, timeZone));
 }
-// A `?at=` epoch from a link, kept only while it is still in the future.
+// A `?at=` epoch from a link, kept only while it is in the next year.
+// The bound keeps hostile values out of Temporal's supported range.
 export function futureTime(value: string | null, now = Date.now()) {
   const at = Number(value);
-  return value && Number.isSafeInteger(at) && at > now ? at : null;
+  return value && Number.isSafeInteger(at) && at > now && at <= now + 366 * DAY
+    ? at
+    : null;
 }

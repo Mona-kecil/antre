@@ -648,3 +648,18 @@ test("unknown retry confirmation cannot be replayed against a later ambiguous at
     status: { kind: "published", urn: "urn:li:share:1000" },
   });
 });
+
+test("week returns only that range's scheduled posts, the draft count and the next slot", async () => {
+  const { t, draft } = await setup();
+  const inside = await draft("Inside the week.");
+  const outside = await draft("Next week.");
+  await draft("Still a draft.");
+  await t.mutation(api.linkedin.queue, { id: inside, at: wib("2026-10-20T07:00:00") });
+  await t.mutation(api.linkedin.queue, { id: outside, at: wib("2026-10-27T07:00:00") });
+  const from = wib("2026-10-19T00:00:00");
+  const week = await t.query(api.linkedin.week, { from, until: from + 7 * day });
+  expect(week.items.map((post) => post.text)).toEqual(["Inside the week."]);
+  expect(week.drafts).toBe(1);
+  expect(week.nextSlot).toBe(wib("2026-10-19T06:00:00"));
+  await expect(t.query(api.linkedin.week, { from, until: from + 40 * day })).rejects.toThrow("32 days");
+});

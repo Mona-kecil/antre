@@ -64,25 +64,22 @@ export async function linkedinWeek(
 ) {
   const { today, day, from } = frame(url, timeZone);
   const until = calendarDay(from, 7, timeZone);
-  const [scheduled, published, failed] = await Promise.all(
-    (["scheduled", "published", "failed"] as const).map((view) =>
-      client.query(api.linkedin.list, { secret, view, limit: 100 }),
-    ),
-  );
-  const { windows, intervalMinutes } = scheduled.settings;
+  const linkedin = await client.query(api.linkedin.week, {
+    secret,
+    from,
+    until,
+  });
+  const { windows, intervalMinutes } = linkedin.settings;
   const week: Week = {
     channel: "linkedin",
     from,
     day,
     today,
-    nextSlot: scheduled.nextSlot,
+    nextSlot: linkedin.nextSlot,
     settings: { windows, intervalMinutes, timeZone },
-    marks: [...scheduled.items, ...published.items, ...failed.items].flatMap(
+    marks: linkedin.items.flatMap(
       (post) =>
-        post.status.kind === "draft" ||
-        post.at === null ||
-        post.at < from ||
-        post.at >= until
+        post.status.kind === "draft" || post.at === null
           ? []
           : [
               {
@@ -96,5 +93,5 @@ export async function linkedinWeek(
             ],
     ),
   };
-  return { week, drafts: scheduled.counts.drafts, settings: scheduled.settings };
+  return { week, drafts: linkedin.drafts, settings: linkedin.settings };
 }

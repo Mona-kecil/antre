@@ -24,16 +24,24 @@
 		return groups;
 	}
 
+	// Posts at off-grid minutes share the nearest cell; the most urgent one colours it.
+	const urgency: WeekMark['kind'][] = ['failed', 'held', 'publishing', 'queued', 'published'];
 	function byCell(day: number) {
-		const cells = new Map<number, WeekMark>();
+		const cells = new Map<number, WeekMark[]>();
 		const all = windows(day).flat();
+		if (!all.length) return cells;
 		for (const mark of week.marks) {
 			if (mark.at < day || mark.at >= calendarDay(day, 1, tz)) continue;
-			const nearest = all.reduce((a, b) => (Math.abs(b - mark.at) < Math.abs(a - mark.at) ? b : a), all[0]);
-			if (nearest !== undefined && !cells.has(nearest)) cells.set(nearest, mark);
+			const nearest = all.reduce((a, b) => (Math.abs(b - mark.at) < Math.abs(a - mark.at) ? b : a));
+			cells.set(nearest, [...(cells.get(nearest) ?? []), mark]);
 		}
+		for (const marks of cells.values()) marks.sort((a, b) => urgency.indexOf(a.kind) - urgency.indexOf(b.kind) || a.at - b.at);
 		return cells;
 	}
+	const describe = (marks: WeekMark[]) =>
+		marks.length === 1
+			? `${short(marks[0].at)} · ${marks[0].text.split('\n')[0]}`
+			: `${short(marks[0].at)} · ${marks.length} posts`;
 
 	function withDay(day: number) {
 		const url = new URL(page.url.href);
@@ -80,7 +88,7 @@
 		</div>
 		{#each days as day}
 			{@const cells = byCell(day)}
-			{@const count = [...cells.values()].length}
+			{@const count = [...cells.values()].reduce((sum, marks) => sum + marks.length, 0)}
 			{@const lastPast = day === week.today ? windows(day).flat().filter((at) => at <= now).at(-1) : undefined}
 			<div class="col" class:on={day === week.day} class:today={day === week.today} class:past={day < week.today}>
 				<a
@@ -95,15 +103,15 @@
 				{#each windows(day) as group}
 					<span class="win">
 						{#each group as at}
-							{@const mark = cells.get(at)}
-							{#if mark}
+							{@const marks = cells.get(at)}
+							{#if marks}
 								<a
-									class="cell {tone(mark)}"
+									class="cell {tone(marks[0])}"
 									class:now={at === lastPast}
-									href={markHref(mark)}
-									style:--c={topicColor(mark.topic ?? undefined, taxonomy)}
-									data-tip="{short(at)} · {mark.text.split('\n')[0]}"
-									aria-label="{short(at)}, {mark.text.split('\n')[0]}"
+									href={markHref(marks[0])}
+									style:--c={topicColor(marks[0].topic ?? undefined, taxonomy)}
+									data-tip={describe(marks)}
+									aria-label={describe(marks)}
 								></a>
 							{:else if at > now}
 								<a

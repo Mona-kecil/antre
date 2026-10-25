@@ -472,9 +472,14 @@
 		min-width: 0;
 		padding: 0;
 		border: 0;
-		outline: 0;
+		border-bottom: 1.5px solid transparent;
 		background: none;
 		color: var(--fg);
+	}
+
+	.tag:focus-visible {
+		outline: none;
+		border-bottom-color: var(--focus);
 	}
 
 	.tag::placeholder {

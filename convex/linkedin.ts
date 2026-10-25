@@ -534,6 +534,52 @@ export const list = ownerQuery(
   },
 );
 
+// One week of LinkedIn posts for the desktop sidebar, read by index range
+// instead of scanning the whole table.
+export const week = ownerQuery(
+  { from: v.number(), until: v.number() },
+  async (ctx: QueryCtx, { from, until }) => {
+    if (
+      !Number.isSafeInteger(from) ||
+      !Number.isSafeInteger(until) ||
+      until <= from ||
+      until - from > 32 * 86_400_000
+    )
+      throw new Error("Use a range of up to 32 days");
+    const range = (kind: Post["status"]["kind"]) =>
+      ctx.db
+        .query("linkedinPosts")
+        .withIndex("workspace_by_kind_at", (q) =>
+          q
+            .eq("workspaceId", ctx.workspaceId)
+            .eq("status.kind", kind)
+            .gte("status.at", from)
+            .lt("status.at", until),
+        )
+        .collect();
+    const [posts, drafts, settings, scheduled] = await Promise.all([
+      Promise.all(
+        (["queued", "publishing", "held", "failed", "published"] as const).map(
+          range,
+        ),
+      ).then((groups) => groups.flat()),
+      ctx.db
+        .query("linkedinPosts")
+        .withIndex("workspace_by_kind_at", (q) =>
+          q.eq("workspaceId", ctx.workspaceId).eq("status.kind", "draft"),
+        )
+        .collect(),
+      settingsFor(ctx),
+      active(ctx),
+    ]);
+    return {
+      items: posts.map(item),
+      drafts: drafts.length,
+      settings,
+      nextSlot: nextSlot(settings, occupied(scheduled), Date.now()),
+    };
+  },
+);
 export const queue = ownerMutation(
   { ...postId, at: v.optional(v.number()) },
   async (ctx: MutationCtx, { id, at: requested }) => {

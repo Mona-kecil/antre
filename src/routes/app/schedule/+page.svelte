@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { tick } from 'svelte';
-	import { MediaQuery } from 'svelte/reactivity';
 	import { topicColor, type TaxonomyEntry } from '#lib/labels.ts';
 	import { act } from '#lib/toast.svelte.ts';
 	import { calendarDay } from '#lib/calendar.ts';
@@ -22,8 +21,6 @@
 	import type { PageProps } from './$types';
 
 	const LIMIT = 20;
-	// The desktop sidebar and Agenda show the week and the day, so the page drops its own.
-	const wide = new MediaQuery('min-width: 1100px', false);
 	let { data }: PageProps = $props();
 	const taxonomy = $derived((data.taxonomy ?? []) as TaxonomyEntry[]);
 	const username = $derived(data.account?.username ?? 'you');
@@ -98,6 +95,15 @@
 			?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
 	}
 
+	// Week grid links arrive as #post-ID; the post may be folded away or on a later page.
+	let reached = '';
+	afterNavigate(() => {
+		const id = /^#post-(.+)$/.exec(page.url.hash)?.[1];
+		if (!id || reached === `${data.day}:${id}` || !data.posts.some((post) => post.id === id)) return;
+		reached = `${data.day}:${id}`;
+		void select(id);
+	});
+
 	function open(id: string, sheet: 'move' | 'swap' | 'more') {
 		target = id;
 		if (sheet === 'move') moving = true;
@@ -108,7 +114,7 @@
 
 <svelte:head><title>Schedule · antre</title></svelte:head>
 
-<TopBar title={wide.current ? (data.day === data.today ? 'Today' : dayLabel(data.day)) : 'Schedule'}>
+<TopBar title="Schedule">
 	{#if data.day !== data.today}
 		<a class="today" href="/app/schedule">Today</a>
 	{/if}
@@ -117,7 +123,6 @@
 
 <AccountBanner held={data.held} />
 
-{#if !wide.current}
 <nav class="week" aria-label="Days">
 	<a class="icon-btn" href={dayHref(calendarDay(data.day, -7, data.settings.timeZone))} aria-label="Previous week"><Icon name="left" /></a>
 	{#each week as at, i}
@@ -158,7 +163,6 @@
 	{selected}
 	onselect={select}
 />
-{/if}
 
 {#if foldable}
 	<button
@@ -504,5 +508,13 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		line-height: 21px;
+	}
+
+	/* The desktop week grid and agenda already show the week and the day's timeline. */
+	@media (min-width: 1100px) {
+		.week,
+		:global(.dayline) {
+			display: none;
+		}
 	}
 </style>
