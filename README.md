@@ -81,6 +81,8 @@ npm run build
 
 Tests exercise workspace isolation, owned media, personal agent grants, timezone transitions, migration, and publishing recovery with simulated provider responses. Live provider approval and posting need separate account tests.
 
+Pushing to `main` deploys the Convex functions and then the app. The production build in `vercel.json` runs `npx convex deploy` with the `CONVEX_DEPLOY_KEY` set in Vercel's production environment. Preview builds skip Convex. Run production functions with `npx convex run --prod`.
+
 With the local Convex server and web server running, the integration check uses two temporary WorkOS staging users:
 
 ```sh
