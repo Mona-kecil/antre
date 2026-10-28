@@ -13,7 +13,6 @@ export const variables = defineEnvVars({
   WORKOS_API_KEY: optional,
   WORKOS_CLIENT_ID: optional,
   WORKOS_COOKIE_PASSWORD: optional,
-  WORKOS_REDIRECT_URI: optionalUrl,
   THREADS_APP_ID: optional,
   THREADS_APP_SECRET: optional,
   LINKEDIN_CLIENT_ID: optional,

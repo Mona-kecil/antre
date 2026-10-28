@@ -6,7 +6,6 @@ vi.mock("$app/env/private", () => ({
   WORKOS_API_KEY: undefined,
   WORKOS_CLIENT_ID: undefined,
   WORKOS_COOKIE_PASSWORD: undefined,
-  WORKOS_REDIRECT_URI: undefined,
 }));
 
 test.each(["/", "/demo", "/demo/compose", "/privacy"])(

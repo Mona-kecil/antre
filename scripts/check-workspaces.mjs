@@ -26,7 +26,7 @@ const modes = {
     }),
   },
   prod: {
-    app: 'https://antre-hazel.vercel.app',
+    app: 'https://antre.monosodiums.com',
     validate(env) {
       assert(env.CONVEX_URL === 'https://hip-wolverine-557.convex.cloud', 'Use the Antre production Convex deployment.');
       assert(env.WORKOS_API_KEY?.startsWith('sk_live_'), 'Use a WorkOS production API key.');

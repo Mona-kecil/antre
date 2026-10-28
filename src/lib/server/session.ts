@@ -10,15 +10,13 @@ export function workosConfig() {
     !env.WORKOS_API_KEY ||
     !env.WORKOS_CLIENT_ID ||
     !env.WORKOS_COOKIE_PASSWORD ||
-    env.WORKOS_COOKIE_PASSWORD.length < 32 ||
-    !env.WORKOS_REDIRECT_URI
+    env.WORKOS_COOKIE_PASSWORD.length < 32
   )
     return null;
   return {
     apiKey: env.WORKOS_API_KEY,
     clientId: env.WORKOS_CLIENT_ID,
     cookiePassword: env.WORKOS_COOKIE_PASSWORD,
-    redirectUri: env.WORKOS_REDIRECT_URI,
   };
 }
 
@@ -27,7 +25,7 @@ export function authkit() {
   if (!config)
     error(
       503,
-      "Login setup is incomplete. Set WORKOS_API_KEY, WORKOS_CLIENT_ID, WORKOS_REDIRECT_URI, and WORKOS_COOKIE_PASSWORD (at least 32 characters). You can still use the demo.",
+      "Login setup is incomplete. Set WORKOS_API_KEY, WORKOS_CLIENT_ID, and WORKOS_COOKIE_PASSWORD (at least 32 characters). You can still use the demo.",
     );
   const workos = new WorkOS(config.apiKey, {
     clientId: config.clientId,
