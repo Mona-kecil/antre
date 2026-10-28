@@ -27,7 +27,8 @@ Create a WorkOS staging environment for development. Register `http://localhost:
 
 - `WORKOS_API_KEY` and `WORKOS_CLIENT_ID` from that same environment.
 - `WORKOS_COOKIE_PASSWORD` to a private random value of at least 32 characters.
-- `WORKOS_REDIRECT_URI` to the registered callback.
+
+Login returns to `/auth/workos/callback` on the host that started it, so register that path for every host that serves the app.
 
 Set `WORKOS_CLIENT_ID` in the matching Convex deployment too:
 
@@ -43,7 +44,7 @@ The WorkOS CLI is available through `npx workos@latest`. `profile list` shows lo
 
 Threads needs `THREADS_APP_ID` and `THREADS_APP_SECRET`. Register `/auth/callback` on the app origin as its OAuth callback. The same app secret must be set in Convex for signed Meta uninstall and deletion callbacks.
 
-LinkedIn needs **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI`; register `/auth/linkedin/callback` on the app origin. The privacy page is `/privacy`.
+LinkedIn needs **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**. Antre requests `w_member_social`, `openid`, and `profile`. Set `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`, and register `/auth/linkedin/callback` on each app origin. `LINKEDIN_REDIRECT_URI` is optional; setting it pins the callback to one host. The privacy page is `/privacy`.
 
 Sign in to Antre, then connect either profile from onboarding or settings. A LinkedIn-only workspace does not need Threads. Connections verify the platform token's identity before storage. A remote profile can belong to one workspace; reconnecting must use that same profile so queued posts cannot change destination.
 
@@ -97,6 +98,6 @@ For production, pass a dotenv file and a JSON array of owner post IDs kept outsi
 node scripts/check-workspaces.mjs --prod --env /path/to/production.env --foreign-ids /path/to/owner-post-ids.json
 ```
 
-Production mode requires a live WorkOS API key, client ID, a session sealing password of at least 32 characters, and `CONVEX_URL=https://hip-wolverine-557.convex.cloud`. It targets `https://antre-hazel.vercel.app`, creates passwordless temporary users, and authenticates them with Magic Auth. An explicit dotenv file overrides matching process variables; missing values fall back to the process environment. The optional ID file checks owner posts through read queries from both temporary workspaces. The script deletes only those temporary workspaces and WorkOS users. This mode has not been run against production for this change.
+Production mode requires a live WorkOS API key, client ID, a session sealing password of at least 32 characters, and `CONVEX_URL=https://hip-wolverine-557.convex.cloud`. It targets `https://antre.monosodiums.com`, creates passwordless temporary users, and authenticates them with Magic Auth. An explicit dotenv file overrides matching process variables; missing values fall back to the process environment. The optional ID file checks owner posts through read queries from both temporary workspaces. The script deletes only those temporary workspaces and WorkOS users. This mode has not been run against production for this change.
 
 `npm run build` creates a Vercel build; it does not deploy it. `npx convex dev --once` changes the selected development backend. `npx convex deploy` changes production. The operator reports the production owner migration is complete; this source then requires ownership. Convex validates stored documents on deployment and rejects rows that lack required fields. See the [rollout history and schema gate](docs/plans/public-workspaces-rollout.md).

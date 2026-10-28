@@ -12,7 +12,6 @@ vi.mock("$app/env/private", () => ({
   WORKOS_API_KEY: "sk_test_only",
   WORKOS_CLIENT_ID: "client_test_only",
   WORKOS_COOKIE_PASSWORD: "test-cookie-password-at-least-32-characters",
-  WORKOS_REDIRECT_URI: "https://antre.example/auth/workos/callback",
 }));
 vi.mock("#lib/server/convex.ts", () => ({
   authenticatedConvex: () => ({ client: backend, secret: undefined }),
@@ -197,6 +196,20 @@ test.each(["screen_hint=sign-up", "signup=1"])(
       throw new Error("Expected hosted account creation");
     expect(new URL(result.location).searchParams.get("screen_hint")).toBe(
       "sign-up",
+    );
+  },
+);
+
+test.each(["https://antre.example", "https://antre.monosodiums.test"])(
+  "login on %s returns to the same host",
+  async (origin) => {
+    const { cookies } = cookieJar();
+    const result = await outcome(() =>
+      login({ url: new URL(`${origin}/login`), cookies } as never),
+    );
+    if (!isRedirect(result)) throw new Error("Expected hosted login redirect");
+    expect(new URL(result.location).searchParams.get("redirect_uri")).toBe(
+      `${origin}/auth/workos/callback`,
     );
   },
 );

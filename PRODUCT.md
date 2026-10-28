@@ -16,7 +16,7 @@ Antre holds drafts for review and publishes approved posts at chosen times.
 
 ## Operating Context
 
-SvelteKit serves the public site, demo, and private app. Convex stores workspace data and runs publishing jobs. WorkOS AuthKit supplies app login. Threads and LinkedIn OAuth connect publishing profiles after login. The existing Vercel deployment is https://antre-hazel.vercel.app; this branch's public release still needs deployment and provider access checks.
+SvelteKit serves the public site, demo, and private app. Convex stores workspace data and runs publishing jobs. WorkOS AuthKit supplies app login. Threads and LinkedIn OAuth connect publishing profiles after login. The existing Vercel deployment is https://antre.monosodiums.com; this branch's public release still needs deployment and provider access checks.
 
 ## Capabilities and Constraints
 

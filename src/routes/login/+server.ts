@@ -3,12 +3,12 @@ import { authkit, safeReturnPath } from "#lib/server/session.ts";
 import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
-  const { workos, clientId, redirectUri } = authkit();
+  const { workos, clientId } = authkit();
   const authorization = await workos.userManagement.getAuthorizationUrlWithPKCE(
     {
       provider: "authkit",
       clientId,
-      redirectUri,
+      redirectUri: `${url.origin}/auth/workos/callback`,
       screenHint:
         url.searchParams.get("screen_hint") === "sign-up" ||
         url.searchParams.get("signup") === "1"
