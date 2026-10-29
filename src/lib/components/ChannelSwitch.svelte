@@ -1,14 +1,16 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	const linkedin = $derived(page.url.pathname.startsWith('/app/linkedin'));
+	import { usePlace } from '#lib/place.svelte.ts';
+	const place = usePlace();
+	const url = $derived(place.url);
+	const linkedin = $derived(url.pathname.startsWith('/app/linkedin'));
 	const section = $derived(
-		page.url.pathname.endsWith('/settings')
+		url.pathname.endsWith('/settings')
 			? 'settings'
-			: page.url.pathname === '/app/schedule' ||
-				  page.url.searchParams.get('view') === 'scheduled'
+			: url.pathname === '/app/schedule' ||
+				  url.searchParams.get('view') === 'scheduled'
 				? 'schedule'
-				: page.url.pathname === '/app/library' ||
-					  page.url.searchParams.get('view') === 'published'
+				: url.pathname === '/app/library' ||
+					  url.searchParams.get('view') === 'published'
 					? 'library'
 					: 'drafts'
 	);

@@ -1,16 +1,19 @@
 <script lang="ts">
 	import { navigating, page } from '$app/state';
 	import { isCurrent, isLinkedIn, navItems } from '#lib/nav.ts';
+	import { usePlace } from '#lib/place.svelte.ts';
 	import type { Week } from '#lib/week.ts';
 	import ChannelSwitch from './ChannelSwitch.svelte';
 	import Icon from './Icon.svelte';
 	import WeekGrid from './WeekGrid.svelte';
 
 	let { week, now }: { week: Week; now: number } = $props();
-	const items = $derived(navItems(page.url));
+	const place = usePlace();
+	const url = $derived(place.url);
+	const items = $derived(navItems(url));
 	const compose = $derived(items.find((item) => item.icon === 'plus')!);
-	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
-	const linkedin = $derived(isLinkedIn(page.url));
+	const badges = $derived(place.badges);
+	const linkedin = $derived(isLinkedIn(url));
 	const name = $derived(
 		linkedin ? (page.data.connection?.name ?? 'LinkedIn') : (page.data.account?.username ?? 'you')
 	);
@@ -26,7 +29,7 @@
 				<a
 					href={item.href}
 					class:pending={isCurrent(navigating.to?.url, item.href)}
-					aria-current={isCurrent(page.url, item.href) ? 'page' : undefined}
+					aria-current={isCurrent(url, item.href) ? 'page' : undefined}
 				>
 					<Icon name={item.icon} size={18} />
 					{item.label}

@@ -1,14 +1,15 @@
 import { expect, test, vi } from "vitest";
-import { isHttpError } from "@sveltejs/kit";
+import { isHttpError, isRedirect } from "@sveltejs/kit";
 import { handle } from "../../hooks.server";
 import { GET as login } from "../login/+server";
+vi.mock("$app/env", () => ({ dev: false }));
 vi.mock("$app/env/private", () => ({
   WORKOS_API_KEY: undefined,
   WORKOS_CLIENT_ID: undefined,
   WORKOS_COOKIE_PASSWORD: undefined,
 }));
 
-test.each(["/", "/demo", "/demo/compose", "/privacy"])(
+test.each(["/", "/privacy"])(
   "%s resolves without any auth or backend configuration",
   async (path) => {
     const resolve = vi.fn(async () => new Response("public"));
@@ -34,15 +35,31 @@ test("login names the missing WorkOS setup", async () => {
   expect(result.body.message).toContain("WORKOS_COOKIE_PASSWORD");
 });
 
-test("demo responses block network connections and form submissions", async () => {
+test("the old demo address sends visitors to the sample on the home page", async () => {
+  const result = await Promise.resolve()
+    .then(() =>
+      handle({
+        event: {
+          url: new URL("https://antre.example/demo/compose"),
+          request: new Request("https://antre.example/demo/compose"),
+          setHeaders: vi.fn(),
+        },
+        resolve: async () => new Response("demo"),
+      } as never),
+    )
+    .catch((cause: unknown) => cause);
+  expect(isRedirect(result) && [result.status, result.location]).toEqual([308, "/#sample"]);
+});
+
+test("the home page blocks network connections and form submissions", async () => {
   const setHeaders = vi.fn();
   await handle({
     event: {
-      url: new URL("https://antre.example/demo"),
-      request: new Request("https://antre.example/demo"),
+      url: new URL("https://antre.example/"),
+      request: new Request("https://antre.example/"),
       setHeaders,
     },
-    resolve: async () => new Response("demo"),
+    resolve: async () => new Response("home"),
   } as never);
   expect(setHeaders).toHaveBeenCalledWith({
     "content-security-policy": expect.stringContaining("connect-src 'none'; form-action 'none'"),

@@ -25,7 +25,7 @@ export function authkit() {
   if (!config)
     error(
       503,
-      "Login setup is incomplete. Set WORKOS_API_KEY, WORKOS_CLIENT_ID, and WORKOS_COOKIE_PASSWORD (at least 32 characters). You can still use the demo.",
+      "Login setup is incomplete. Set WORKOS_API_KEY, WORKOS_CLIENT_ID, and WORKOS_COOKIE_PASSWORD (at least 32 characters). You can still try the sample on the home page.",
     );
   const workos = new WorkOS(config.apiKey, {
     clientId: config.clientId,

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { nextSlot, validateSchedulingSettings } from '../domain/scheduling';
+import { sampleState } from './fixtures';
 
-export const DEMO_STORAGE_KEY = 'antre.demo.v1';
 export const channels = ['threads', 'linkedin'] as const;
 export const channelSchema = z.enum(channels);
 export type Channel = z.infer<typeof channelSchema>;
@@ -31,13 +31,14 @@ const statusSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('draft') }),
 	z.object({ kind: z.literal('queued'), at: instant }),
 	z.object({ kind: z.literal('failed'), at: instant, reason: z.string() }),
-	z.object({ kind: z.literal('held'), at: instant, reason: z.string() }),
-	z.object({
-		kind: z.literal('published'),
-		at: instant,
-		outcome: z.literal('simulated')
-	})
+	z.object({ kind: z.literal('published'), at: instant })
 ]);
+const metaSchema = z.object({
+	topic: z.string().optional(),
+	angle: z.string().optional(),
+	format: z.string().optional(),
+	notes: z.string().optional()
+});
 const contentSchema = z
 	.object({
 		channel: channelSchema,
@@ -48,7 +49,8 @@ const contentSchema = z
 				})
 			)
 			.min(1)
-			.max(20)
+			.max(20),
+		meta: metaSchema
 	})
 	.superRefine(({ channel, parts }, ctx) => {
 		const limit = channel === 'threads' ? 500 : 3000;
@@ -62,14 +64,31 @@ const contentSchema = z
 	});
 const postSchema = contentSchema.safeExtend({
 	id: z.string().min(1),
+	source: z.enum(['agent', 'you']),
 	createdAt: instant,
-	status: statusSchema
+	status: statusSchema,
+	metrics: z.object({ views: z.number(), likes: z.number(), replies: z.number() }).optional()
 });
 export type DemoPost = z.infer<typeof postSchema>;
+const answer = z
+	.string()
+	.trim()
+	.min(1, 'Write an answer first')
+	.refine((text) => [...text].length <= 500, 'Keep the answer within 500 characters');
+const replySchema = z.object({
+	id: z.string().min(1),
+	username: z.string(),
+	text: z.string(),
+	postText: z.string(),
+	at: instant,
+	draft: answer.nullable(),
+	sent: z.string().nullable()
+});
+export type DemoReply = z.infer<typeof replySchema>;
 const stateSchema = z
 	.object({
-		version: z.literal(1),
 		posts: z.array(postSchema).max(1000),
+		replies: z.array(replySchema),
 		settings: z.object({ threads: settingsSchema, linkedin: settingsSchema })
 	})
 	.superRefine(({ posts }, ctx) => {
@@ -87,205 +106,32 @@ const stateSchema = z
 			ctx.addIssue({ code: 'custom', message: 'Duplicate demo queue slots' });
 	});
 export type DemoState = z.infer<typeof stateSchema>;
-type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;
-type Listener = (state: DemoState) => void;
 
-export function demoFixtures(now: number): DemoState {
-	const settings: DemoSettings = {
-		windows: [
-			{ start: '09:00', end: '12:00' },
-			{ start: '16:00', end: '18:00' }
-		],
-		intervalMinutes: 30,
-		timeZone: 'Asia/Jakarta'
-	};
-	const at = nextSlot(settings, new Set(), now);
-	const following = nextSlot(settings, new Set([at]), now);
-	return {
-		version: 1,
-		settings: {
-			threads: structuredClone(settings),
-			linkedin: structuredClone(settings)
-		},
-		posts: [
-			{
-				id: 'sample-thread',
-				channel: 'threads',
-				createdAt: now - 3600000,
-				parts: [
-					{
-						text: 'A small rule for making things: leave the next person a clear place to start.'
-					},
-					{
-						text: 'Name the draft. Write down the open question. Put the next step where they can see it.'
-					}
-				],
-				status: { kind: 'draft' }
-			},
-			{
-				id: 'sample-note',
-				channel: 'threads',
-				createdAt: now - 7200000,
-				parts: [
-					{
-						text: 'Today’s workbench: one notebook, three rough ideas, and enough room to change my mind.'
-					}
-				],
-				status: { kind: 'draft' }
-			},
-			{
-				id: 'sample-queued',
-				channel: 'threads',
-				createdAt: now - 86400000,
-				parts: [
-					{
-						text: 'The first version gives you something to ask better questions about. Make it small. Put it in someone’s hands.'
-					}
-				],
-				status: { kind: 'queued', at }
-			},
-			{
-				id: 'sample-queued-two',
-				channel: 'threads',
-				createdAt: now - 86400000,
-				parts: [
-					{
-						text: 'A walk without headphones is part of my writing process. The notes tend to arrive on the way home.'
-					}
-				],
-				status: { kind: 'queued', at: following }
-			},
-			{
-				id: 'sample-failed',
-				channel: 'threads',
-				createdAt: now - 86400000,
-				parts: [
-					{ text: 'Some days, the useful work is taking a sentence out.' }
-				],
-				status: {
-					kind: 'failed',
-					at: now - 1800000,
-					reason:
-						'Sample failure: the platform rejected this attempt. Retry to place it back in the demo queue.'
-				}
-			},
-			{
-				id: 'sample-held',
-				channel: 'threads',
-				createdAt: now - 86400000,
-				parts: [
-					{
-						text: 'Keep a little space in the schedule for the thing you haven’t noticed yet.'
-					}
-				],
-				status: {
-					kind: 'held',
-					at: now - 3600000,
-					reason:
-						'Sample hold: the connection needs attention. No real account is connected in this demo.'
-				}
-			},
-			{
-				id: 'sample-published',
-				channel: 'threads',
-				createdAt: now - 172800000,
-				parts: [
-					{
-						text: 'Finished a sketchbook today. Most pages are unfinished. They still did their job.'
-					}
-				],
-				status: { kind: 'published', at: now - 86400000, outcome: 'simulated' }
-			},
-			{
-				id: 'sample-linkedin-draft',
-				channel: 'linkedin',
-				createdAt: now - 3600000,
-				parts: [
-					{
-						text: 'We changed our project handoffs this week.\n\nEach handoff now includes three things: what works, what remains open, and the next step. It takes a few minutes to write and gives the next person a place to start.\n\nWhat do you include in a handoff?'
-					}
-				],
-				status: { kind: 'draft' }
-			},
-			{
-				id: 'sample-linkedin-queue',
-				channel: 'linkedin',
-				createdAt: now - 7200000,
-				parts: [
-					{
-						text: 'A good review starts with a shared question. Before our next review, we’re writing down the decision we need to make. The slides can wait.'
-					}
-				],
-				status: { kind: 'queued', at }
-			},
-			{
-				id: 'sample-linkedin-published',
-				channel: 'linkedin',
-				createdAt: now - 172800000,
-				parts: [
-					{
-						text: 'We set aside one afternoon to document the questions new teammates ask. Those questions became our onboarding guide.'
-					}
-				],
-				status: { kind: 'published', at: now - 86400000, outcome: 'simulated' }
-			}
-		]
-	};
-}
-
-/** No timers or publishers: every transition requires a local user action. */
+/** No timers, publishers, or storage: every transition is a local user action, and a reload starts over. */
 export class DemoStore {
 	#state: DemoState;
-	#listeners = new Set<Listener>();
-	#storage?: Storage;
 	#now: () => number;
 	#id: () => string;
-	persistenceNotice = '';
+	#start: number;
 
 	constructor({
-		storage,
 		now = Date.now,
 		id = () => crypto.randomUUID()
-	}: { storage?: Storage; now?: () => number; id?: () => string } = {}) {
-		this.#storage = storage;
+	}: { now?: () => number; id?: () => string } = {}) {
 		this.#now = now;
 		this.#id = id;
-		this.#state = demoFixtures(now());
-		try {
-			const saved = storage?.getItem(DEMO_STORAGE_KEY);
-			if (saved) {
-				const parsed = stateSchema.safeParse(JSON.parse(saved));
-				if (!parsed.success) throw new Error('Invalid demo data');
-				this.#state = parsed.data;
-			}
-		} catch {
-			this.persistenceNotice =
-				'Saved demo data could not be read. Sample posts have been restored.';
-		}
+		this.#start = now();
+		this.#state = stateSchema.parse(sampleState(this.#start));
 	}
 	get state(): DemoState {
 		return structuredClone(this.#state);
 	}
-	subscribe(listener: Listener) {
-		this.#listeners.add(listener);
-		listener(this.state);
-		return () => {
-			this.#listeners.delete(listener);
-		};
-	}
 	#commit(state: DemoState) {
 		this.#state = stateSchema.parse(state);
-		try {
-			this.#storage?.setItem(DEMO_STORAGE_KEY, JSON.stringify(this.#state));
-		} catch {
-			this.persistenceNotice =
-				'Browser storage is unavailable or full. Changes will last until you leave this page.';
-		}
-		for (const listener of this.#listeners) listener(this.state);
 	}
 	#post(id: string) {
 		const post = this.#state.posts.find((post) => post.id === id);
-		if (!post) throw new Error('This demo post no longer exists');
+		if (!post) throw new Error('This sample post no longer exists');
 		return post;
 	}
 	#replace(id: string, change: (post: DemoPost) => DemoPost) {
@@ -294,6 +140,16 @@ export class DemoStore {
 			...this.#state,
 			posts: this.#state.posts.map((post) =>
 				post.id === id ? change(post) : post
+			)
+		});
+	}
+	#reply(id: string, change: (reply: DemoReply) => DemoReply) {
+		if (!this.#state.replies.some((reply) => reply.id === id))
+			throw new Error('This sample reply no longer exists');
+		this.#commit({
+			...this.#state,
+			replies: this.#state.replies.map((reply) =>
+				reply.id === id ? change(reply) : reply
 			)
 		});
 	}
@@ -319,6 +175,7 @@ export class DemoStore {
 		id?: string;
 		channel: Channel;
 		parts: { text: string }[];
+		meta: DemoPost['meta'];
 	}): string {
 		const content = contentSchema.parse(input);
 		if (input.id) {
@@ -326,7 +183,7 @@ export class DemoStore {
 			if (current.channel !== input.channel)
 				throw new Error('A draft stays in its original channel');
 			if (current.status.kind === 'published')
-				throw new Error('Simulated published posts cannot be edited');
+				throw new Error('Published posts cannot be edited');
 			this.#replace(input.id, (post) => ({ ...post, ...content }));
 			return input.id;
 		}
@@ -334,20 +191,30 @@ export class DemoStore {
 		this.#commit({
 			...this.#state,
 			posts: [
-				{ ...content, id, createdAt: this.#now(), status: { kind: 'draft' } },
+				{
+					...content,
+					id,
+					source: 'you',
+					createdAt: this.#now(),
+					status: { kind: 'draft' }
+				},
 				...this.#state.posts
 			]
 		});
 		return id;
 	}
+	/** Returns the slot the post took. */
 	queue(id: string) {
 		const post = this.#post(id);
-		this.schedule(id, this.next(post.channel, id));
+		const at = this.next(post.channel, id);
+		if (!at) throw new Error('No free slot left. Add a posting window in Settings.');
+		this.schedule(id, at);
+		return at;
 	}
 	schedule(id: string, at: number) {
 		const post = this.#post(id);
 		if (post.status.kind === 'published')
-			throw new Error('Simulated published posts cannot be queued');
+			throw new Error('Published posts cannot be queued');
 		if (
 			!Number.isInteger(at) ||
 			at <= this.#now() ||
@@ -362,7 +229,7 @@ export class DemoStore {
 	}
 	unqueue(id: string) {
 		if (this.#post(id).status.kind === 'published')
-			throw new Error('Simulated published posts stay in the library');
+			throw new Error('Published posts stay in the library');
 		this.#replace(id, (post) => ({ ...post, status: { kind: 'draft' } }));
 	}
 	swap(id: string, otherId: string) {
@@ -389,30 +256,36 @@ export class DemoStore {
 		});
 	}
 	retry(id: string) {
-		const kind = this.#post(id).status.kind;
-		if (kind !== 'held' && kind !== 'failed')
-			throw new Error('Only failed or held posts can be retried');
-		this.queue(id);
+		if (this.#post(id).status.kind !== 'failed')
+			throw new Error('Only failed posts can be retried');
+		return this.queue(id);
 	}
-	simulate(id: string, outcome: 'published' | 'failed' | 'held') {
-		const post = this.#post(id);
-		if (post.status.kind !== 'queued')
-			throw new Error('Queue the post before simulating an outcome');
-		const at = post.status.at;
-		this.#replace(id, (post) => ({
-			...post,
-			status:
-				outcome === 'published'
-					? { kind: 'published', at, outcome: 'simulated' }
-					: {
-							kind: outcome,
-							at,
-							reason:
-								outcome === 'failed'
-									? 'Simulated failure: the platform rejected this attempt. Retry to queue it again.'
-									: 'Simulated hold: this connection needs attention. Retry to queue it again.'
-						}
-		}));
+	/** Marks the post published now. Nothing leaves the browser. */
+	publish(id: string) {
+		if (this.#post(id).status.kind === 'published')
+			throw new Error('This post is already published');
+		const at = this.#now();
+		this.#replace(id, (post) => ({ ...post, status: { kind: 'published', at } }));
+	}
+	remove(id: string) {
+		this.#post(id);
+		this.#commit({
+			...this.#state,
+			posts: this.#state.posts.filter((post) => post.id !== id)
+		});
+	}
+	saveReply(id: string, text: string) {
+		const draft = answer.parse(text);
+		this.#reply(id, (reply) => ({ ...reply, draft }));
+	}
+	sendReply(id: string) {
+		this.#reply(id, (reply) => {
+			if (reply.draft === null) throw new Error('Save an answer before sending');
+			return { ...reply, sent: reply.draft, draft: null };
+		});
+	}
+	discardReply(id: string) {
+		this.#reply(id, (reply) => ({ ...reply, draft: null }));
 	}
 	updateSettings(channel: Channel, input: DemoSettings) {
 		const settings = validateSchedulingSettings(settingsSchema.parse(input));
@@ -422,6 +295,6 @@ export class DemoStore {
 		});
 	}
 	reset() {
-		this.#commit(demoFixtures(this.#now()));
+		this.#commit(sampleState(this.#start));
 	}
 }

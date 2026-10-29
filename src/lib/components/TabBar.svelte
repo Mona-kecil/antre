@@ -1,17 +1,20 @@
 <script lang="ts">
-	import { navigating, page } from '$app/state';
+	import { navigating } from '$app/state';
 	import { isCurrent, isLinkedIn, navItems } from '#lib/nav.ts';
+	import { usePlace } from '#lib/place.svelte.ts';
 	import Icon from './Icon.svelte';
 
-	const linkedin = $derived(isLinkedIn(page.url));
-	const tabs = $derived(navItems(page.url));
-	const badges = $derived((page.data.badges ?? {}) as Record<string, number>);
+	const place = usePlace();
+	const url = $derived(place.url);
+	const linkedin = $derived(isLinkedIn(url));
+	const tabs = $derived(navItems(url));
+	const badges = $derived(place.badges);
 </script>
 
 <nav aria-label="Main" class:linkedin>
 	{#each tabs as tab}
 		{@const count = tab.badge ? badges[tab.badge] : 0}
-		{@const active = isCurrent(page.url, tab.href)}
+		{@const active = isCurrent(url, tab.href)}
 		{@const pending = isCurrent(navigating.to?.url, tab.href)}
 		<a
 			href={tab.href}

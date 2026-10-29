@@ -8,7 +8,7 @@
 <main>
 	<h1>Privacy</h1>
 	<p>
-		Antre gives each signed-in person a workspace for reviewing drafts and scheduling posts. The public demo uses sample data in your browser and does not publish posts.
+		Antre gives each signed-in person a workspace for reviewing drafts and scheduling posts. The sample workspace on the home page uses sample data in your browser and does not publish posts.
 	</p>
 	<h2>What Antre stores</h2>
 	<p>

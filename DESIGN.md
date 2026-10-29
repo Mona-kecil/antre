@@ -1,6 +1,6 @@
 ---
 name: antre
-description: A phone-first review and publishing console with private workspaces and a public demo.
+description: A phone-first review and publishing console with private workspaces and a public sample workspace.
 colors:
   paper: "#ffffff"
   paper-dim: "#efeeea"
@@ -22,21 +22,25 @@ typography:
   navigation-label:
     fontSize: "10px"
     fontWeight: 400
-  public-display-large:
+  public-display:
     fontSize: "60px"
     fontWeight: 700
-  public-display:
-    fontSize: "48px"
-    fontWeight: 700
+    lineHeight: 1.04
+    letterSpacing: "-0.04em"
   public-display-small:
     fontSize: "40px"
     fontWeight: 700
-  public-brand:
-    fontSize: "32px"
-    fontWeight: 750
+    lineHeight: 1.04
+    letterSpacing: "-0.04em"
+  wordmark:
+    fontSize: "20px"
+    fontWeight: 650
+    letterSpacing: "-0.03em"
   public-section:
     fontSize: "24px"
     fontWeight: 700
+    lineHeight: 1.15
+    letterSpacing: "-0.03em"
   section:
     fontSize: "17px"
     fontWeight: 700
@@ -62,9 +66,14 @@ typography:
     fontWeight: 400
     lineHeight: "16px"
     fontFeature: "tnum"
+  mono:
+    fontFamily: "ui-monospace, monospace"
+    fontSize: "13px"
+    lineHeight: 1.6
 rounded:
   chip: "8px"
   field: "10px"
+  toast: "12px"
   sheet: "16px"
   pill: "999px"
 spacing:
@@ -79,6 +88,12 @@ components:
     rounded: "{rounded.pill}"
     padding: "0 16px"
     height: "36px"
+  button-primary-large:
+    backgroundColor: "{colors.lime}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.pill}"
+    padding: "0 20px"
+    height: "44px"
   button-secondary:
     backgroundColor: "{colors.paper}"
     textColor: "{colors.ink}"
@@ -102,6 +117,18 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.pill}"
     size: "36px"
+  toast:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.paper}"
+    typography: "{typography.body}"
+    rounded: "{rounded.toast}"
+    padding: "10px 16px"
+  command-block:
+    backgroundColor: "{colors.paper-dim}"
+    textColor: "{colors.ink}"
+    typography: "{typography.mono}"
+    rounded: "{rounded.field}"
+    padding: "16px 18px"
 ---
 
 # Design System: antre
@@ -150,16 +177,20 @@ Topic dots take their colour from the taxonomy (`topicColor`), so they are conte
 
 **Body Font:** the system UI stack (SF Pro Text on iOS, with system-ui and Roboto as fallbacks).
 
+**Label/Mono Font:** the system monospace (`ui-monospace, monospace`), only for commands and tool names.
+
 **Character:** native and invisible. The post text should read exactly like Threads, so no display face competes with it.
 
 ### Hierarchy
-- **Public display** (700, 40–60px, -0.04em): the landing page's opening heading. The phone layout uses 48px, reducing to 40px below 360px. Private app and demo page titles keep the 20px title size.
-- **Public brand and section** (32px wordmark, 24px section headings): the wider landing page. They use the same system font and ink palette as the app.
+- **Public display** (700, `clamp(40px, 4.4vw, 60px)`, line-height 1.04, -0.04em): the public home's two-line headline only. Private app and sample page titles keep the 20px title size.
+- **Public section** (700, 24px, line-height 1.15, -0.03em): public home section headings ("Connect your agent.", the closing call).
+- **Wordmark** (650, 20px, -0.03em): "antre" beside the three-bar mark, identical in the app sidebar and the public masthead; the footer uses it at 17px.
 - **Title** (700, 20px/24px, -0.02em): top bar page titles.
 - **Section** (700, 17px): day summary ("Today"), sheet titles and settings section heads.
 - **Body** (400, 15px/1.4): post text, reply text and list rows.
 - **Meta** (500, 13px/18px): action row buttons, chips, banners and the pager.
 - **Label** (400, 12px/16px, tabular numerals): tags, notes and DayLine readouts. Tab bar labels and badges drop to 10px.
+- **Mono** (13px, line-height 1.6; 12.5px in the tool list): the MCP command block and tool names on the public home.
 
 ### Named Rules
 **The Full Text Rule.** Post content is never clamped or truncated. Only owner-facing notes may collapse to one line, and they expand on tap.
@@ -170,16 +201,26 @@ Below 1100px the layout is a single column with `max-width: 600px`, centred, wit
 
 At 1100px and wider the private app is three columns: a 248px sidebar, the page (paper, content capped at 680px) and a 320px agenda, with both side columns on Canvas and scrolling on their own. The sidebar holds the wordmark, channel switch, views with counts, New post, the week grid and the account. The agenda lists the selected day's slots. The top bar keeps the page title and actions but drops the channel switch, and the bottom tab bar is hidden. The Schedule page drops its week strip, summary and DayLine on desktop because the grid and agenda already show them. The composer opens as a 640px dialog over the shell; Escape cancels.
 
+The public home sits on Paper. The masthead, intro, Connect section, closing call and footer share a 1344px container with a `clamp(20px, 4vw, 48px)` gutter. The intro is a two-column grid (1.3fr headline, 1fr pitch, bottom-aligned, 64px column gap) wider than 800px and stacks below. Between the intro and Connect, the sample workspace runs edge to edge between two hairlines with no frame: below 1100px it is the phone Drafts column (600px), and at 1100px and wider it is the private app's 248px / 1fr / 320px shell with Canvas rails, the page content capped at 680px. The Connect section is a 1fr / 1.3fr grid that also stacks at 800px.
+
 ## Elevation & Depth
 
-The system is flat and divided by hairlines. Depth appears only in bottom sheets: a dimmed scrim and a sheet surface (`--bg-sheet`) that slides up with `--ease-sheet` (`cubic-bezier(0.32, 0.72, 0, 1)`, 420ms). Rows, chips and banners carry no shadows.
+The system is flat and divided by hairlines. Shadows belong only to surfaces that float above the page: toasts, bottom sheets, the composer dialog and the week-grid hover tooltip. Bottom sheets add a dimmed scrim and slide up with `--ease-sheet` (`cubic-bezier(0.32, 0.72, 0, 1)`, 420ms). Rows, chips, banners, the command block and the sample workspace carry no shadows.
+
+### Shadow Vocabulary
+- **Toast** (`box-shadow: 0 6px 24px rgb(0 0 0 / 0.2)`): the ink toast, in the app and in the public home sample.
+- **Sheet** (`box-shadow: 0 -8px 40px rgb(0 0 0 / 0.18)`): bottom sheets, cast upward.
+- **Dialog** (`box-shadow: 0 24px 64px rgb(0 0 0 / 0.28)`): the desktop composer dialog (20px radius).
+- **Tooltip** (`box-shadow: 0 4px 14px rgb(0 0 0 / 0.25)`): the week-grid cell readout.
 
 ### Named Rules
+**The Floating-Only Shadow Rule.** A shadow means the surface floats over the page and goes away. Use the vocabulary above; nothing that sits in the flow gets one.
+
 **The Hairline Rule.** Rows are separated by 1px lines, never by cards or shadows.
 
 ## Shapes
 
-Interactive controls are fully round (999px pills). Filter chips use 8px corners, fields 10px, and sheet tops 16px. Avatars, topic dots and DayLine capsules are circles or stadiums. The thread rail is a 2px rounded line.
+Interactive controls are fully round (999px pills). Filter chips use 8px corners, fields and the command block 10px, toasts 12px, and sheet tops 16px. Avatars, topic dots and DayLine capsules are circles or stadiums. The thread rail is a 2px rounded line.
 
 ## Components
 
@@ -208,6 +249,21 @@ Interactive controls are fully round (999px pills). Filter chips use 8px corners
 - **Agenda (desktop):** the selected day's slots as rows (time, then post chip or a dashed "Free" target), with a dashed divider between windows and a red now row.
 - **Bottom sheets:** a grab handle, a 17px title and a close button. Option rows are 48px tall. They hold filters, scheduling, swap, more actions and taxonomy pickers.
 
+### Toast
+- **Style:** an ink fill with paper text, 15px/20px, at least 44px tall, 10px 16px padding, a 12px radius and the toast shadow. Errors switch to a Failed Red fill with an alert icon; an Undo action is a bold underlined text button.
+- **Motion:** rises in from `translateY(12px) scale(0.98)` over 320ms with `--ease`. In the app it sits above the tab bar; in the public home sample it sticks to the foot of the Drafts column.
+
+### Command Block
+- **Style:** a `pre` on Paper Dim with a 10px radius, 16px 18px padding, mono 13px/1.6, scrolling horizontally rather than wrapping. No border, no shadow.
+
+### Public Home
+- **Masthead:** 72px tall; the three-bar mark (4px bars of 10, 17 and 13px, 2px radius, 2.5px gap) and the 20px/650 "antre" wordmark on the left; a 15px/600 "Sign in" text link and a secondary "Create account" pill on the right. The pill hides at 480px and narrower.
+- **Intro:** the two-line public display headline; beside it a single 17px/1.5 Ink Muted sentence (42ch) with a Lime "Create account" pill and a secondary "Try the sample" pill that jumps to the sample, both 44px tall with 20px padding. At 480px and narrower the two pills share the row equally.
+- **Sample workspace:** the real Sidebar, Post, Labels, Agenda, WeekGrid and TabBar components over a local store, edge to edge with no device frame or card. Every view works in place: Drafts, Schedule, Library, Replies, Settings and Compose, on both channels. Links under `/app` inside the sample move a local URL instead of the page, and a toast inside the sample confirms each change. On desktop the sidebar's own brand row is hidden because the masthead carries it, and Compose opens as a centred 640px card over a 42% black scrim covering the whole sample. On phones Compose takes the page and the tab bar is contained so it sits at the foot of the sample instead of the viewport. Escape closes Compose.
+- **Queue:** the row slides out (280ms) while the rest reflow (flip, 320ms); the slot's agenda chip and week cell flash Lime once with the `arrive` keyframe (from the Lime background at `scale(1.06)`, 1400ms, `--ease`), the Drafts counts in the bar, sidebar and tab bar drop, and a toast names the slot ("Queued for …"). Reduced motion collapses all of it to 1ms. With no drafts left, a centred empty state offers "Reset sample".
+- **Connect your agent:** a 24px heading, one paragraph, and the permission disclosure at 13px Ink Muted; beside it the command block and a `dl` of tools (136px mono name column, 13px Ink Muted description) separated by hairlines. Below 480px the name stacks over its description.
+- **Closing call and footer:** a 24px heading, one Ink Muted sentence and a Lime "Create account" pill; the footer is a hairline-topped row with the 17px wordmark and a 13px Privacy link.
+
 ### DayLine (signature)
 The DayLine is a sticky, 84px-tall SVG strip for the selected day:
 - Window tracks are 8px Paper Dim bars, and free future slots are r=2 hollow circles.
@@ -223,6 +279,7 @@ The DayLine is a sticky, 84px-tall SVG strip for the selected day:
 - **Do** use tabular numerals for every time, date and count.
 - **Do** keep tags at 12px with the 8px topic dot.
 - **Do** page any list that can grow, at 20 per page.
+- **Do** show the product on public pages as the real components with sample data, edge to edge between hairlines.
 
 ### Don't:
 - **Don't** truncate or clamp post text.
@@ -230,3 +287,4 @@ The DayLine is a sticky, 84px-tall SVG strip for the selected day:
 - **Don't** add colour that doesn't mean held, failed, published, pinned or a topic.
 - **Don't** use Ink Faint for readable text.
 - **Don't** separate rows with cards or shadows.
+- **Don't** put a shadow on anything that is not a toast, sheet, dialog or tooltip.

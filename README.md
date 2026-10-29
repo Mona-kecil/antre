@@ -2,8 +2,7 @@
 
 Antre reviews drafts and publishes scheduled posts to Threads and personal LinkedIn profiles. SvelteKit serves the site and MCP endpoint. Convex stores workspace data and runs publishing jobs. WorkOS AuthKit handles app login; platform OAuth connects posting profiles after login.
 
-- `/` introduces the app.
-- `/demo` uses synthetic data stored in the current browser. It cannot publish to a platform. Reset clears its saved edits.
+- `/` introduces the app with a working sample workspace. The sample keeps synthetic data in the open tab and cannot publish to a platform. `/demo` redirects to it.
 - `/app` holds a signed-in user's private workspace. Threads and LinkedIn keep separate posts, settings, and queues.
 - `/mcp` accepts a personal agent key created in workspace settings.
 
@@ -19,7 +18,7 @@ npm run dev
 
 Use the same Convex deployment for the web server's `CONVEX_URL` and `CONVEX_DEPLOYMENT`. The old local setup pointed the web server at production while the Convex CLI used development. Check both before testing writes.
 
-Set server variables from [.env.example](.env.example). Public pages and the demo work without credentials. Login and private operations report missing configuration when requested. Keep all keys server-side; do not use a `PUBLIC_` prefix.
+Set server variables from [.env.example](.env.example). Public pages and the sample work without credentials. Login and private operations report missing configuration when requested. Keep all keys server-side; do not use a `PUBLIC_` prefix.
 
 ## WorkOS
 
