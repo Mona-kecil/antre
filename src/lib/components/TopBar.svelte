@@ -1,20 +1,23 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { page } from '$app/state';
+	import { usePlace } from '#lib/place.svelte.ts';
 	import ChannelSwitch from './ChannelSwitch.svelte';
 
+	// The public home nests the bar under its own h1, so it asks for a lower heading.
 	let {
 		title,
+		heading = 'h1',
 		lead,
 		children
-	}: { title: string; lead?: Snippet; children?: Snippet } = $props();
+	}: { title: string; heading?: 'h1' | 'h2'; lead?: Snippet; children?: Snippet } = $props();
+	const place = usePlace();
 </script>
 
 <header class="bar">
 	{@render lead?.()}
-	<h1>{title}</h1>
+	<svelte:element this={heading} class="title">{title}</svelte:element>
 	<div class="end">
-		{#if !page.url.pathname.endsWith('/compose')}<span class="channel"><ChannelSwitch /></span>{/if}{@render children?.()}
+		{#if !place.url.pathname.endsWith('/compose')}<span class="channel"><ChannelSwitch /></span>{/if}{@render children?.()}
 	</div>
 </header>
 
@@ -32,7 +35,7 @@
 		border-bottom: 1px solid var(--line);
 	}
 
-	h1 {
+	.title {
 		flex: 1;
 		font-size: 20px;
 		line-height: 24px;
@@ -55,7 +58,7 @@
 			padding: 0 16px 0 24px;
 		}
 
-		h1 {
+		.title {
 			font-size: 24px;
 			line-height: 30px;
 		}

@@ -338,7 +338,7 @@ test("hooks set WorkOS locals, protect app and uploads, and guard writes", async
       true,
     );
   }
-  for (const path of ["/", "/demo", "/privacy"]) {
+  for (const path of ["/", "/privacy"]) {
     expect(
       (
         await handle({

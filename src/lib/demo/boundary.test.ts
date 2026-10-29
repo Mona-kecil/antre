@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const extensions = ['', '.ts', '.js', '.svelte', '.css', '.svg'];
-const packages = new Set(['svelte', 'zod', '@js-temporal/polyfill']);
+// `$app/state` is read-only page state; the app shell components read the URL and page data from it.
+const packages = new Set(['svelte', 'zod', '@js-temporal/polyfill', '$app/state']);
 const forbiddenAPIs = new Set([
 	'fetch',
 	'XMLHttpRequest',
@@ -60,10 +61,7 @@ function verifyBrowserGraph(
 					`Nonlocal or unapproved dependency: ${specifier} in ${file}`
 				);
 			const relative = path.relative(root, target).replaceAll(path.sep, '/');
-			if (
-				!relative.startsWith('src/lib/') &&
-				!relative.startsWith('src/routes/demo/')
-			)
+			if (!relative.startsWith('src/lib/'))
 				throw new Error(`Live or server dependency: ${specifier}`);
 			if (relative.includes('/server/') || /\.(server|test)\./.test(relative))
 				throw new Error(`Server/test dependency: ${specifier}`);
@@ -116,13 +114,10 @@ function verifyBrowserGraph(
 	return visited;
 }
 
-describe('public demo publishing boundary', () => {
-	it('follows the actual landing and demo graphs without live clients, server publishing, or network APIs', () => {
+describe('public sample publishing boundary', () => {
+	it('follows the actual landing graph without live clients, server publishing, or network APIs', () => {
 		const files = verifyBrowserGraph(
-			[
-				path.join(root, 'src/routes/demo/+page.svelte'),
-				path.join(root, 'src/lib/views/PublicHome.svelte')
-			],
+			[path.join(root, 'src/lib/views/PublicHome.svelte')],
 			(file) => readFileSync(file, 'utf8'),
 			existsSync
 		);

@@ -1,3 +1,4 @@
+import { dev } from "$app/env";
 import { error, redirect } from "@sveltejs/kit";
 import type { Handle } from "@sveltejs/kit/hooks";
 import {
@@ -9,10 +10,11 @@ import {
 
 export const handle: Handle = async ({ event, resolve }) => {
   const path = event.url.pathname;
-  if (path === "/demo" || path.startsWith("/demo/")) {
+  if (path === "/demo" || path.startsWith("/demo/")) redirect(308, "/#sample");
+  // The home page runs a sample workspace that must never reach the network. Dev keeps 'self' for Vite's socket.
+  if (path === "/") {
     event.setHeaders({
-      "content-security-policy":
-        "connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: blob:",
+      "content-security-policy": `connect-src ${dev ? "'self'" : "'none'"}; form-action 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: blob:`,
     });
   }
   const privatePath =

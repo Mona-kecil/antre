@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { calendarDay } from '#lib/calendar.ts';
+	import { usePlace } from '#lib/place.svelte.ts';
 	import { clock, dayLabel, isoDay, slots } from '#lib/displayTime.svelte.ts';
 	import { topicColor, type TaxonomyEntry } from '#lib/labels.ts';
 	import type { Week, WeekMark } from '#lib/week.ts';
 	import Icon from './Icon.svelte';
 
 	let { week, now }: { week: Week; now: number } = $props();
+	const place = usePlace();
 	const taxonomy = $derived((page.data.taxonomy ?? []) as TaxonomyEntry[]);
 	const tz = $derived(week.settings.timeZone);
 	const days = $derived(Array.from({ length: 7 }, (_, i) => calendarDay(week.from, i, tz)));
@@ -55,7 +57,7 @@
 		marks.length === 1 || linkedin ? markHref(marks[0]) : `/app/schedule?day=${isoDay(marks[0].at)}`;
 
 	function withDay(day: number) {
-		const url = new URL(page.url.href);
+		const url = new URL(place.url.href);
 		url.searchParams.delete('page');
 		if (day === week.today) url.searchParams.delete('day');
 		else url.searchParams.set('day', isoDay(day));
