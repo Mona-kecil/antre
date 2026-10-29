@@ -20,6 +20,12 @@ Use the same Convex deployment for the web server's `CONVEX_URL` and `CONVEX_DEP
 
 Set server variables from [.env.example](.env.example). Public pages and the sample work without credentials. Login and private operations report missing configuration when requested. Keep all keys server-side; do not use a `PUBLIC_` prefix.
 
+`scripts/brand.py` renders the favicons, app icons, and share image in `static/` from one definition of the mark. Rerun it after changing either:
+
+```sh
+uv run -q --with playwright --with pillow python -I scripts/brand.py
+```
+
 ## WorkOS
 
 Create a WorkOS staging environment for development. Register `http://localhost:5173/auth/workos/callback` as a redirect URI and `http://localhost:5173/` as a logout URI. Set:
