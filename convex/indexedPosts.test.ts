@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.setSystemTime(now);
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
 });
@@ -350,7 +351,14 @@ test("counts and facets match a recount across all views through status and tag 
     posts: [{ id, meta: { topic: "T1", format: "F1" } }],
   });
   await assertRecount(t);
-  await t.mutation(api.posts.deletePost, { id });
+  await connectThreads(t, {
+    threadsUserId: "user",
+    username: "owner",
+    accessToken: "test-access-token",
+    tokenExpiresAt: now + day,
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ success: true })));
+  await t.action(api.posts.remove, { id });
   await assertRecount(t);
 });
 

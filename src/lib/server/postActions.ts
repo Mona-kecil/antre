@@ -74,7 +74,7 @@ export async function postAction({ request, locals }: RequestEvent) {
         await client.mutation(api.posts.publishNow, { secret, id });
         return { message: "Publishing now…" };
       case "delete":
-        await client.mutation(api.posts.deletePost, { secret, id });
+        await client.action(api.posts.remove, { secret, id });
         return { message: "Post deleted" };
       default:
         return fail(400, { error: "Unknown post action" });

@@ -45,7 +45,10 @@ async function pending() {
       } as never),
     )
     .catch((cause: unknown) => cause);
-  expect(result).toMatchObject({ status: 302 });
+  expect(result).toMatchObject({
+    status: 302,
+    location: expect.stringContaining("threads_delete"),
+  });
   const state: { state: string } = JSON.parse(
     jar.get("threads_state") ?? "null",
   );

@@ -180,6 +180,7 @@ test("foreign draft IDs do not cross the authenticated workspace boundary", asyn
   await other.mutation(api.workspaces.ensure, {});
   bridge.query.mockImplementation(other.query);
   bridge.mutation.mockImplementation(other.mutation);
+  bridge.action.mockImplementation(other.action);
   await expect(
     loadCompose(event(`/app/compose?edit=${draftId}`, workosOther)),
   ).rejects.toBeDefined();

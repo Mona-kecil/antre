@@ -9,12 +9,13 @@ import { activeWorkspace, connectionActive, workspaceContext } from "./access";
 import { patchPost } from "./lib/postStore";
 import { hold, releaseHeld, startPublishing } from "./lib/scheduling";
 
-class ThreadsError extends Error {
+export class ThreadsError extends Error {
   constructor(
     message: string,
     readonly code?: number,
     readonly httpStatus?: number,
     readonly transient = false,
+    readonly subcode?: number,
   ) {
     super(message);
   }
@@ -70,6 +71,9 @@ export async function threads(
         response.status >= 500 ||
         ("is_transient" in error && error.is_transient === true) ||
         ("code" in error && [4, 17, 32, 613].includes(Number(error.code))),
+      "error_subcode" in error && typeof error.error_subcode === "number"
+        ? error.error_subcode
+        : undefined,
     );
   }
   if (!response.ok)

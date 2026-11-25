@@ -32,7 +32,7 @@
 			<p class="muted confirm">
 				{confirming === 'now'
 					? 'This posts to Threads immediately, skipping the queue.'
-					: 'The post and its images are removed. This can’t be undone.'}
+					: 'Deletes this post, including its published parts on Threads. This can’t be undone.'}
 			</p>
 			<form method="POST" action="?/post" use:enhance={done} class="stack">
 				<input type="hidden" name="id" value={id} />

@@ -11,7 +11,11 @@ import { load as loadLibrary } from "./library/+page.server";
 import { api } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
 
-const bridge = vi.hoisted(() => ({ query: vi.fn(), mutation: vi.fn() }));
+const bridge = vi.hoisted(() => ({
+  query: vi.fn(),
+  mutation: vi.fn(),
+  action: vi.fn(),
+}));
 vi.mock("#lib/server/convex.ts", () => ({
   convex: () => ({ client: bridge, secret: undefined }),
 }));
@@ -24,6 +28,7 @@ test("compose and post actions save, tag, schedule in WIB, unqueue, and delete t
   const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
   bridge.mutation.mockImplementation(t.mutation);
+  bridge.action.mockImplementation(t.action);
   try {
     await t.run((ctx) =>
       ctx.db.insert("account", {
@@ -107,6 +112,7 @@ test("compose and post actions save, tag, schedule in WIB, unqueue, and delete t
     );
     bridge.query.mockImplementation(other.query);
     bridge.mutation.mockImplementation(other.mutation);
+    bridge.action.mockImplementation(other.action);
     await expect(
       actions.post({
         ...(request({ id, operation: "delete" }) as object),
@@ -237,7 +243,7 @@ test("compose edit finds draft and failed parts by id and rejects missing or sch
     expect(await edit()).toMatchObject({ edit: { id, failed: true } });
     await t.mutation(api.posts.queue, { secret, id });
     await expect(edit()).rejects.toMatchObject({ status: 404 });
-    await t.mutation(api.posts.deletePost, { secret, id });
+    await t.action(api.posts.remove, { secret, id });
     await expect(edit()).rejects.toMatchObject({ status: 404 });
     expect(
       bridge.query.mock.calls.map(([query]) => getFunctionName(query)),
