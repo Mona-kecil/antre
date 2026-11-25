@@ -106,7 +106,7 @@ test("foreign Threads IDs and batches reject before writes and every view stays 
     () => b.mutation(api.posts.unqueue, { id: pa }),
     () => b.mutation(api.posts.publishNow, { id: pa }),
     () => b.mutation(api.posts.retry, { id: pa }),
-    () => b.mutation(api.posts.deletePost, { id: pa }),
+    () => b.action(api.posts.remove, { id: pa }),
     () => b.mutation(api.posts.move, { id: pa }),
     () => b.mutation(api.posts.swap, { id: pb, otherId: pa }),
     () =>
@@ -263,7 +263,7 @@ test("agent credentials are hashed, scoped, revocable and cannot manage connecti
     ).posts.map((post) => post?.id ?? null),
   ).toEqual([pa, null]);
   await expect(
-    root.mutation(api.posts.deletePost, { secret: token, id: pb }),
+    root.action(api.posts.remove, { secret: token, id: pb }),
   ).rejects.toThrow("Not found");
   await expect(
     root.mutation(api.workspaces.createAgentGrant, {

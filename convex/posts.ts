@@ -2,14 +2,16 @@ import { v } from "convex/values";
 import { isoDay, slots } from "../src/lib/time";
 import { addLocalDays, zoned } from "../src/lib/timezone";
 import { DEFAULT_TOPIC_TAG, topicTagSchema } from "../src/lib/topicTag";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import type {
+  OwnedActionCtx as ActionCtx,
   OwnedMutationCtx as MutationCtx,
   OwnedQueryCtx as QueryCtx,
 } from "./access";
 import { ownedAsset, ownedRow, workspaceContext } from "./access";
-import { ownerMutation, ownerQuery } from "./auth";
+import { ownerAction, ownerMutation, ownerQuery } from "./auth";
 import { partsWithImages, validateImage } from "./lib/media";
 import {
   activePosts,
@@ -34,7 +36,9 @@ import {
   validateSettings,
   validateTime,
 } from "./lib/scheduling";
+import { ThreadsError, threads } from "./publishing";
 import { meta, part, queueSettings } from "./schema";
+import { workspaceMutation, workspaceQuery } from "./scoped";
 
 const source = v.optional(v.union(v.literal("web"), v.literal("agent")));
 
@@ -234,17 +238,112 @@ export const retry = ownerMutation(
   },
 );
 
-export const deletePost = ownerMutation(
-  { id: v.id("posts"), source },
-  async (ctx: MutationCtx, { id }) => {
-    const post = await ownedRow(ctx, id);
-    if (!post) throw new Error("Post not found");
+export const removalTarget = workspaceQuery({
+  args: { id: v.id("posts") },
+  handler: async (ctx, { id }) => {
+    const post = await ctx.db.get(id);
+    if (post && post.workspaceId !== ctx.workspaceId)
+      throw new Error("Not found");
+    return post;
+  },
+});
+
+export const removeLocal = workspaceMutation({
+  args: { id: v.id("posts"), deletedIds: v.array(v.string()) },
+  handler: async (ctx: MutationCtx, { id, deletedIds }) => {
+    const post = await ctx.db.get(id);
+    if (!post) return;
+    if (post.workspaceId !== ctx.workspaceId) throw new Error("Not found");
     if (post.status.kind === "publishing")
       throw new Error("Cannot delete a publishing post");
+    if (
+      post.status.kind === "published" &&
+      post.publishedIds.some((publishedId) => !deletedIds.includes(publishedId))
+    )
+      throw new Error("Delete the published post from Threads first");
     if (post.status.kind === "queued")
       await ctx.scheduler.cancel(post.status.jobId);
     await removePost(ctx, id);
     if (post.status.kind === "queued") await compactAfter(ctx, post.status.at);
+  },
+});
+
+export const remove = ownerAction(
+  { id: v.id("posts"), source },
+  async (ctx: ActionCtx, { id }): Promise<void> => {
+    const post = await ctx.runQuery(internal.posts.removalTarget, {
+      workspaceId: ctx.workspaceId,
+      id,
+    });
+    if (!post) return;
+    if (post.status.kind === "publishing")
+      throw new Error("Cannot delete a publishing post");
+    const deletedIds: string[] = [];
+    if (post.status.kind === "published" && post.publishedIds.length > 0) {
+      const account = await ctx.runQuery(internal.publishing.getAccount, {
+        workspaceId: ctx.workspaceId,
+      });
+      const reconnect = "Reconnect Threads to allow deleting posts";
+      if (
+        !account ||
+        account.needsReconnect ||
+        account.tokenExpiresAt <= Date.now()
+      )
+        throw new Error(reconnect);
+      try {
+        for (const publishedId of [...post.publishedIds].reverse()) {
+          await ctx.runQuery(internal.access.background, {
+            workspaceId: ctx.workspaceId,
+            expectedToken: account.accessToken,
+          });
+          try {
+            const body = await threads(
+              publishedId,
+              account.accessToken,
+              {},
+              "DELETE",
+            );
+            if (!("success" in body) || body.success !== true)
+              throw new Error("Threads did not confirm the post deletion");
+          } catch (error) {
+            if (error instanceof ThreadsError) {
+              if (
+                error.code === 10 ||
+                error.code === 200 ||
+                error.code === 190 ||
+                error.httpStatus === 403 ||
+                /permission|threads_delete/i.test(error.message)
+              )
+                throw new Error(reconnect);
+              if (
+                error.httpStatus === 404 ||
+                error.code === 24 ||
+                (error.code === 100 &&
+                  /does not exist|not found/i.test(error.message))
+              ) {
+                deletedIds.push(publishedId);
+                continue;
+              }
+              if (error.code === 100 && error.subcode === 33)
+                throw new Error(reconnect);
+            }
+            throw error;
+          }
+          deletedIds.push(publishedId);
+        }
+      } catch (error) {
+        throw new Error(
+          error instanceof Error
+            ? error.message.replaceAll(account.accessToken, "[redacted]")
+            : "Post deletion failed",
+        );
+      }
+    }
+    await ctx.runMutation(internal.posts.removeLocal, {
+      workspaceId: ctx.workspaceId,
+      id,
+      deletedIds,
+    });
   },
 );
 

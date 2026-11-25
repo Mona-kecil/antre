@@ -58,6 +58,55 @@ async function invokeTool(name: string, args: unknown) {
   );
 }
 
+test("MCP delete_post removes published parts from Threads through the owner action", async () => {
+  const { t, workspaceId } = await workspaceTest(modules);
+  bridge.query.mockImplementation(t.query);
+  bridge.action.mockImplementation(t.action);
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    expect(init?.method).toBe("DELETE");
+    expect(new Headers(init?.headers).get("Authorization")).toBe(
+      "Bearer test-token",
+    );
+    return Response.json({ success: true });
+  });
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const id = await t.run(async (ctx) => {
+      await ctx.db.insert("account", {
+        workspaceId,
+        threadsUserId: "owner",
+        username: "owner",
+        accessToken: "test-token",
+        tokenExpiresAt: Date.now() + 86_400_000,
+        needsReconnect: false,
+      });
+      return insertPost(ctx, {
+        workspaceId,
+        source: "threads",
+        parts: [{ text: "root" }, { text: "reply" }],
+        publishedIds: ["root", "reply"],
+        status: {
+          kind: "published",
+          at: Date.now(),
+          permalink: "https://threads.net/root",
+        },
+      });
+    });
+    const response = await invokeTool("delete_post", { id });
+    expect(response.result.isError, JSON.stringify(response)).not.toBe(true);
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      "https://graph.threads.net/v1.0/reply",
+      "https://graph.threads.net/v1.0/root",
+    ]);
+    expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
+    expect(getFunctionName(bridge.action.mock.calls[0][0])).toBe("posts:remove");
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  }
+});
+
 test("MCP uploads base64 to Convex storage, attaches the image, and rejects invalid inputs before upload", async () => {
   const { t, other, workspaceId } = await workspaceTest(modules);
   bridge.query.mockImplementation(t.query);
@@ -347,6 +396,7 @@ test("MCP rejects missing, invalid and revoked scoped bearer tokens, then initia
       [
         "upload_image",
         "publish_now",
+        "delete_post",
         "send_reply",
         "hide_reply",
         "sync_now",
@@ -814,7 +864,7 @@ test("MCP board paging preserves counts, facets, previews and validation, while 
       source: "web",
       parts: [{ text: "Deleted" }],
     });
-    await t.mutation(api.posts.deletePost, { secret, id: missing });
+    await t.action(api.posts.remove, { secret, id: missing });
     const published = await t.run((ctx) =>
       insertPost(ctx, {
         workspaceId,

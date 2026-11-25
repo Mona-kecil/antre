@@ -184,7 +184,7 @@ test.each(["autoFill", "keepTimes"] as const)(
   },
 );
 
-test.each(["unqueue", "deletePost", "publishNow"] as const)(
+test.each(["unqueue", "remove", "publishNow"] as const)(
   "autoFill compacts on %s and preserves pins and order",
   async (operation) => {
     const { t, draft, get } = await setup("autoFill");
@@ -198,7 +198,8 @@ test.each(["unqueue", "deletePost", "publishNow"] as const)(
       });
     }
     const before = await Promise.all(ids.slice(1).map(get));
-    await t.mutation(api.posts[operation], { id: ids[0] });
+    if (operation === "remove") await t.action(api.posts.remove, { id: ids[0] });
+    else await t.mutation(api.posts[operation], { id: ids[0] });
     expect(
       (await Promise.all(ids.slice(1).map(get))).map((post) => ({
         at: post?.status.kind === "queued" ? post.status.at : null,

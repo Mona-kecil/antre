@@ -488,15 +488,15 @@ function mcpHandler(token: string) {
       server.registerTool(
         "delete_post",
         {
-          annotations: { destructiveHint: true, openWorldHint: false },
+          annotations: { destructiveHint: true, openWorldHint: true },
           description:
-            "Delete a post from antre; live Threads posts remain on Threads",
+            "Delete a post from antre and delete its published parts from Threads",
           inputSchema: z.object({ id }),
         },
         async ({ id }) => {
           const { client, secret } = agentConvex(token);
           return result(
-            await client.mutation(api.posts.deletePost, {
+            await client.action(api.posts.remove, {
               secret,
               id,
               source: "agent",

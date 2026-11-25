@@ -32,6 +32,7 @@ async function setup() {
     replied_to?: { id: string };
     timestamp: string;
   }[] = [];
+  const deletionResponses = new Map<string, Response>();
   let failure:
     | {
         text: string;
@@ -70,6 +71,21 @@ async function setup() {
       requests.push({ method, url: url.href, path, params, at: Date.now() });
       const authorization = new Headers(init?.headers).get("Authorization");
       expect(authorization).toMatch(/^Bearer /);
+      if (method === "DELETE") {
+        const response = deletionResponses.get(path);
+        if (response) {
+          deletionResponses.delete(path);
+          return response;
+        }
+        const index = live.findIndex(({ id }) => id === path);
+        if (index === -1)
+          return Response.json(
+            { error: { message: "Post not found" } },
+            { status: 404 },
+          );
+        live.splice(index, 1);
+        return Response.json({ success: true });
+      }
       if (path === "refresh_access_token") {
         expect(method).toBe("GET");
         expect(url.href).toBe(
@@ -219,6 +235,9 @@ async function setup() {
     fake: {
       requests,
       live,
+      rejectDelete(id: string, response: Response) {
+        deletionResponses.set(id, response);
+      },
       fail(
         text: string,
         mode: NonNullable<typeof failure>["mode"],
@@ -245,6 +264,149 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
+});
+
+test("deleting a published thread deletes every part in reverse order before removing its row", async () => {
+  const { t, fake } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
+    source: "web",
+    parts: [{ text: "root" }, { text: "reply" }, { text: "last reply" }],
+  });
+  await t.mutation(api.posts.publishNow, { id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  await expect(
+    t.mutation(internal.posts.removeLocal, {
+      workspaceId: await workspaceIdOf(t),
+      id,
+      deletedIds: [],
+    }),
+  ).rejects.toThrow("Delete the published post from Threads first");
+  const fetch = vi.mocked(globalThis.fetch);
+  const dispatch = fetch.getMockImplementation();
+  if (!dispatch) throw new Error("Missing fetch stub");
+  fetch.mockImplementation(async (input, init) => {
+    if (init?.method === "DELETE")
+      expect(await t.query(internal.publishing.getPost, { id })).not.toBeNull();
+    return dispatch(input, init);
+  });
+  await t.action(api.posts.remove, { id });
+  await t.action(api.posts.remove, { id });
+  expect(
+    fake.requests
+      .filter(({ method }) => method === "DELETE")
+      .map(({ path }) => path),
+  ).toEqual(["post-3", "post-2", "post-1"]);
+  expect(fake.live).toEqual([]);
+  expect(await t.query(internal.publishing.getPost, { id })).toBeNull();
+});
+
+test.each(["http-404", "code-24", "code-100"] as const)(
+  "retrying a partial deletion converges when an already deleted part returns %s",
+  async (notFound) => {
+    const { t, fake } = await setup();
+    const id = await t.mutation(api.posts.createDraft, {
+      source: "web",
+      parts: [{ text: "root" }, { text: "reply" }],
+    });
+    await t.mutation(api.posts.publishNow, { id });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    fake.rejectDelete(
+      "post-1",
+      Response.json(
+        { error: { code: 2, message: "Try again" } },
+        { status: 503 },
+      ),
+    );
+    await expect(t.action(api.posts.remove, { id })).rejects.toThrow("Try again");
+    expect(fake.live.map(({ id }) => id)).toEqual(["post-1"]);
+    expect(await t.query(internal.publishing.getPost, { id })).not.toBeNull();
+    if (notFound !== "http-404")
+      fake.rejectDelete(
+        "post-2",
+        Response.json(
+          {
+            error: {
+              code: notFound === "code-24" ? 24 : 100,
+              error_subcode: 33,
+              message: "The requested resource does not exist",
+            },
+          },
+          { status: 400 },
+        ),
+      );
+    await t.action(api.posts.remove, { id });
+    expect(
+      fake.requests
+        .filter(({ method }) => method === "DELETE")
+        .map(({ path }) => path),
+    ).toEqual(["post-2", "post-1", "post-2", "post-1"]);
+    expect(fake.live).toEqual([]);
+    expect(await t.query(internal.publishing.getPost, { id })).toBeNull();
+  },
+);
+
+test.each([
+  { code: 10 },
+  { code: 200 },
+  { code: 190 },
+  { code: 100, error_subcode: 33 },
+  {
+    code: 100,
+    error_subcode: 33,
+    message:
+      "Object does not exist, cannot be loaded due to missing permissions, or does not support this operation",
+  },
+  { code: 100, message: "Requires threads_delete permission for test-access-token" },
+])("deletion error %j requires reconnecting and keeps the row", async (error) => {
+  const { t, fake } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
+    source: "web",
+    parts: [{ text: "root" }],
+  });
+  await t.mutation(api.posts.publishNow, { id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  fake.rejectDelete(
+    "post-1",
+    Response.json(
+      { error: { message: "Rejected test-access-token", ...error } },
+      { status: 400 },
+    ),
+  );
+  await expect(t.action(api.posts.remove, { id })).rejects.toThrow(
+    "Reconnect Threads to allow deleting posts",
+  );
+  expect(fake.live).toHaveLength(1);
+  expect(await t.query(internal.publishing.getPost, { id })).not.toBeNull();
+});
+
+test("deletion redacts the access token from network failures and keeps the row", async () => {
+  const { t } = await setup();
+  const id = await t.mutation(api.posts.createDraft, {
+    source: "web",
+    parts: [{ text: "root" }],
+  });
+  await t.mutation(api.posts.publishNow, { id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  vi.mocked(globalThis.fetch).mockRejectedValueOnce(
+    new Error("Network failed for test-access-token"),
+  );
+  await expect(t.action(api.posts.remove, { id })).rejects.toThrow(
+    "Network failed for [redacted]",
+  );
+  expect(await t.query(internal.publishing.getPost, { id })).not.toBeNull();
+});
+
+test("deleting a draft needs no Threads connection or network call", async () => {
+  const t = await ownerTest();
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const id = await t.mutation(api.posts.createDraft, {
+    source: "web",
+    parts: [{ text: "draft" }],
+  });
+  await t.action(api.posts.remove, { id });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(await t.query(internal.publishing.getPost, { id })).toBeNull();
 });
 
 test("validates stored images when creating and updating drafts and returns image previews", async () => {
@@ -595,7 +757,7 @@ test("publishes a three-part reply chain with an image from Convex storage", asy
     ],
   });
   await t.mutation(api.posts.publishNow, { id });
-  await expect(t.mutation(api.posts.deletePost, { id })).rejects.toThrow(
+  await expect(t.action(api.posts.remove, { id })).rejects.toThrow(
     "publishing",
   );
   await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -737,7 +899,7 @@ test("cancels unqueued and deleted jobs, rejects taken times, and reserves publi
   if (queuedSecond?.status.kind !== "queued")
     throw new Error("Expected queued post");
   const secondJob = queuedSecond.status.jobId;
-  await t.mutation(api.posts.deletePost, { id: second });
+  await t.action(api.posts.remove, { id: second });
   expect(
     await t.run(
       async (ctx) => (await ctx.db.system.get(secondJob))?.state.kind,
